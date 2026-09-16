@@ -52,39 +52,44 @@ function MC.snapshot()
     return result
 end
 
--- Every thumbnail participates in one clockwise ring, including stacked windows.
+-- Read rows from top to bottom, and thumbnails within each row from left to right.
 function MC.order(candidates)
     if #candidates == 0 then return candidates, nil end
     local entries = {}
-    local left, top, right, bottom = math.huge, math.huge, -math.huge, -math.huge
     for i, candidate in ipairs(candidates) do
         local f = candidate.frame
-        left, top = math.min(left, f.x), math.min(top, f.y)
-        right, bottom = math.max(right, f.x + f.w), math.max(bottom, f.y + f.h)
-        entries[i] = { candidate = candidate, ordinal = i, x = f.x + f.w / 2, y = f.y + f.h / 2 }
+        entries[i] = { candidate = candidate, ordinal = i,
+            x = f.x + f.w / 2, y = f.y + f.h / 2, height = f.h }
     end
-    local cx, cy = (left + right) / 2, (top + bottom) / 2
-    for _, entry in ipairs(entries) do
-        local dx, dy = entry.x - cx, entry.y - cy
-        entry.angle = (dx == 0 and dy == 0) and 0 or math.atan(dx, -dy) % (2 * math.pi)
-        entry.radius = dx * dx + dy * dy
-    end
-    table.sort(entries, function(a, b)
-        if a.angle ~= b.angle then return a.angle < b.angle end
-        if a.radius ~= b.radius then return a.radius < b.radius end
+    local function tieBreak(a, b)
         local aid, bid = a.candidate.id, b.candidate.id
         if aid and bid and aid ~= bid then return aid < bid end
         return a.ordinal < b.ordinal
+    end
+    table.sort(entries, function(a, b)
+        if a.y ~= b.y then return a.y < b.y end
+        if a.x ~= b.x then return a.x < b.x end
+        return tieBreak(a, b)
     end)
-    -- Rotate the ring to the thumbnail nearest the upper-left corner.
-    local first, nearest = 1, math.huge
-    for i, entry in ipairs(entries) do
-        local distance = (entry.x - left)^2 + (entry.y - top)^2
-        if distance < nearest then first, nearest = i, distance end
+    local rows = {}
+    for _, entry in ipairs(entries) do
+        local row = rows[#rows]
+        -- Anchor each row at its topmost centre; do not chain staggered rows together.
+        if not row or entry.y - row.y > math.min(row.height, entry.height) / 2 then
+            row = { y = entry.y, height = entry.height, entries = {} }
+            rows[#rows + 1] = row
+        end
+        row.entries[#row.entries + 1] = entry
+        row.height = math.min(row.height, entry.height)
     end
     local ordered = {}
-    for offset = 0, #entries - 1 do
-        ordered[#ordered + 1] = entries[((first - 1 + offset) % #entries) + 1].candidate
+    for _, row in ipairs(rows) do
+        table.sort(row.entries, function(a, b)
+            if a.x ~= b.x then return a.x < b.x end
+            if a.y ~= b.y then return a.y < b.y end
+            return tieBreak(a, b)
+        end)
+        for _, entry in ipairs(row.entries) do ordered[#ordered + 1] = entry.candidate end
     end
     return ordered, 1
 end

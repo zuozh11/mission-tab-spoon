@@ -49,35 +49,36 @@ cover.frame={x=-10,y=-10,w=120,h=120}
 check(mc.point({candidates={target,cover}},target)==nil, 'fully hidden thumbnail never guesses a pointer target')
 point=mc.point({candidates={target}},target)
 check(point.x==50 and point.y==50, 'isolated thumbnail uses centre')
-local ring={}
-for i,xy in ipairs({{0,-100},{100,0},{0,100},{-100,0}}) do
-    ring[i]={id=i,frame={x=xy[1]-5,y=xy[2]-5,w=10,h=10}}
+local grid={}
+for i,xy in ipairs({{0,0},{100,0},{200,0},{0,100},{100,100},{200,100}}) do
+    grid[i]={id=i,frame={x=xy[1],y=xy[2],w=60,h=60}}
 end
-local sorted,start=mc.order({ring[3],ring[1],ring[4],ring[2]})
-for i=1,4 do check(sorted[i].id==i, 'clockwise order is top/right/bottom/left') end
-check(sorted[start].id==1, 'circular order starts at the upper-left nearest thumbnail')
-check(sorted[(start % #sorted)+1].id==2, 'Tab advances clockwise')
-check(sorted[((start-2) % #sorted)+1].id==4, 'reverse wraps counterclockwise from first item')
-local stacked={}
-local sharedDisplay={}
-for i,xy in ipairs({{0,-100},{100,0},{0,100},{-100,20},{-100,-20}}) do
-    stacked[i]={id=i,groupKey='same.app.space.4',display=sharedDisplay,
-        frame={x=xy[1]-30,y=xy[2]-30,w=60,h=60}}
+local input={grid[6],grid[3],grid[4],grid[2],grid[1],grid[5]}
+local sorted,start=mc.order(input)
+for i=1,6 do
+    check(sorted[i].id==i, 'navigate left to right, then top to bottom')
+    check(sorted[(i % 6)+1].id==(i % 6)+1, 'forward wraps after the bottom-right window')
+    check(sorted[((i-2) % 6)+1].id==((i-2) % 6)+1, 'reverse follows the full reading order')
 end
-local clockwise=mc.order({stacked[5],stacked[3],stacked[1],stacked[4],stacked[2]})
-local positions={}
-for i,candidate in ipairs(clockwise) do positions[candidate.id]=i end
-for id=1,5 do
-    check(clockwise[(positions[id] % 5)+1].id==(id % 5)+1,
-        'all thumbnails follow clockwise geometry, including bottom-to-top on the left stack')
-    check(clockwise[((positions[id]-2) % 5)+1].id==((id-2) % 5)+1,
-        'counterclockwise navigation exactly reverses the full ring')
-end
+check(start==1 and input[1].id==6, 'start at upper-left without mutating the snapshot')
+local staggered=mc.order({
+    {id=4,frame={x=100,y=130,w=80,h=60}},
+    {id=2,frame={x=100,y=0,w=80,h=60}},
+    {id=3,frame={x=0,y=120,w=80,h=80}},
+    {id=1,frame={x=0,y=10,w=80,h=80}},
+})
+for i=1,4 do check(staggered[i].id==i, 'uneven thumbnail sizes and offsets retain left-to-right rows') end
+local stacked=mc.order({
+    {id=3,frame={x=0,y=80,w=60,h=60}},
+    {id=1,frame={x=0,y=0,w=60,h=60}},
+    {id=2,frame={x=0,y=40,w=60,h=60}},
+})
+for i=1,3 do check(stacked[i].id==i, 'overlapping vertical stacks are visited top to bottom') end
 local coincidentA={id=10,frame={x=0,y=0,w=40,h=40}}
 local coincidentB={id=20,frame={x=0,y=0,w=40,h=40}}
 local tied=mc.order({coincidentB,coincidentA})
 check(tied[1].id==10 and tied[2].id==20, 'coincident thumbnails use stable window ID order')
-local single,index=mc.order({ring[1]})
+local single,index=mc.order({grid[1]})
 check(index==1 and single[index].id==1, 'one-window layout remains selectable')
 local empty,index=mc.order({})
 check(#empty==0 and index==nil, 'empty layout has no starting window')
