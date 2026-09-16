@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.18', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.19', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -197,6 +197,15 @@ function obj:_tick()
     if s.mode == 'cancelling' then self:_cancel('cancelled'); return end
     snapshot = snapshot or MC.snapshot()
     if snapshot.present and run.ownsMC then run.sawMC = true end
+    -- Closing the last window is a normal overview update, not a failed entry.
+    if snapshot.present and (run.target or run.candidates) and not s.released
+        and (s.mode == 'opening' or s.mode == 'navigating')
+        and (not run.backend or (snapshot.backend == run.backend and snapshot.pid == run.pid))
+        and #MC.onScreen(snapshot, run.screenID, run.screenFrame).candidates == 0 then
+        run.target, run.mouseSelection = nil, true
+        run.backend, run.pid = snapshot.backend, snapshot.pid
+        s.mode = 'navigating'
+    end
     if run.mouseSelection then
         local target
         local screen = hs.mouse.getCurrentScreen()
@@ -327,7 +336,21 @@ function obj:_tick()
         local offset = s.steps - run.stepOrigin
         local index = ((run.base - 1 + offset) % #run.candidates) + 1
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.candidates[index])
-        if not target then self:_cancel('target-disappeared'); return end
+        if not target then
+            if s.released then self:_cancel('target-disappeared'); return end
+            -- Reuse entry reconciliation after a window/app closes. Prefer the next
+            -- surviving window in the old order, then freeze the updated layout.
+            run.recent = {}
+            for offset = 1, #run.candidates do
+                local candidate = run.candidates[((index - 1 + offset) % #run.candidates) + 1]
+                if candidate.id then run.recent[#run.recent + 1] = candidate.id end
+            end
+            run.stepOrigin, run.openedAt = s.steps, time
+            run.target, run.index, run.previous = nil, nil, nil
+            self:_highlight()
+            s.mode = 'opening'
+            return
+        end
         if not s.released then self:_highlight(target) end
         local point = not s.released and MC.point(snapshot, target)
         if run.index ~= index or hoverChanged(run, point)

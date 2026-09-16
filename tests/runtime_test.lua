@@ -300,6 +300,38 @@ f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
 check(f.focused==1, 'reverse navigation returns to original window')
 f=fixture(); f.begin(); f.ready(); f.removed=2; f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
 check(f.spoon:status().lastResult.reason=='target-disappeared' and f.focused==1, 'missing target cancels and restores original')
+for _, key in ipairs({13, 12}) do -- W / Q: native shortcut remains untouched.
+    local closed=fixture(); closed.begin(); closed.ready()
+    check(not closed.input(1,key,{cmd=true}) and not closed.input(2,key,{cmd=true}),
+        'close shortcut passes through while Command remains held')
+    closed.removed=2; closed.tick(0.6); closed.tick(0.63); closed.tick(0.66)
+    check(closed.present and closed.toggles==0 and closed.spoon.run.target.id==3,
+        'closing selected window keeps overview open and selects next survivor')
+    closed.input(1,48,{cmd=true}); closed.input(2,48,{cmd=true}); closed.tick(0.69)
+    check(closed.spoon.run.target.id==1, 'navigation continues through refreshed window order')
+    closed.input(3,55,{}); closed.tick(0.72); closed.tick(0.75)
+    check(closed.spoon:status().lastResult.matched and closed.focused==1,
+        'Command release still confirms after closing a window')
+end
+for _, opening in ipairs({true, false}) do
+    local last=fixture(); last.begin(); if not opening then last.ready() end
+    last.empty=true; last.tick(0.6); last.tick(2)
+    check(last.present and last.toggles==0 and not last.spoon.highlight
+        and last.spoon.run.mouseSelection and not last.spoon.suspended,
+        'closing all windows preserves overview during entry and navigation')
+    last.empty=false; last.input(1,48,{cmd=true}); last.input(2,48,{cmd=true})
+    last.tick(2.03); last.tick(2.06)
+    check(last.spoon.run.target and not last.spoon.run.mouseSelection and last.toggles==0,
+        'keyboard navigation resumes when windows become available again')
+end
+local otherClosed=fixture(); otherClosed.begin(); otherClosed.ready(); otherClosed.removed=3
+otherClosed.tick(0.6)
+check(otherClosed.spoon.run.target.id==2 and otherClosed.toggles==0,
+    'closing another window preserves the current selection')
+otherClosed.input(1,48,{cmd=true}); otherClosed.input(2,48,{cmd=true})
+otherClosed.tick(0.63); otherClosed.tick(0.66); otherClosed.tick(0.69)
+check(otherClosed.spoon.run.target.id==1 and otherClosed.toggles==0,
+    'navigation skips a previously closed window without cancelling')
 f=fixture(); f.begin(); f.ready(); f.input(1,53,{cmd=true}); f.tick(0.6); f.input(3,55,{}); f.tick(0.8); f.tick(1)
 check(f.focused==1 and f.spoon:status().state=='idle', 'Esc cancels without later release committing')
 f=fixture(); f.noOpen=true; f.begin(); f.tick(2); f.tick(2.2); f.tick(2.4)
