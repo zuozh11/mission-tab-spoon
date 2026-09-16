@@ -52,14 +52,14 @@ function MC.snapshot()
     return result
 end
 
--- Read rows from top to bottom, and thumbnails within each row from left to right.
+-- Read columns from left to right, and thumbnails within each column from top to bottom.
 function MC.order(candidates)
     if #candidates == 0 then return candidates, nil end
     local entries = {}
     for i, candidate in ipairs(candidates) do
         local f = candidate.frame
         entries[i] = { candidate = candidate, ordinal = i,
-            x = f.x + f.w / 2, y = f.y + f.h / 2, height = f.h }
+            x = f.x + f.w / 2, y = f.y + f.h / 2, width = f.w }
     end
     local function tieBreak(a, b)
         local aid, bid = a.candidate.id, b.candidate.id
@@ -67,29 +67,29 @@ function MC.order(candidates)
         return a.ordinal < b.ordinal
     end
     table.sort(entries, function(a, b)
-        if a.y ~= b.y then return a.y < b.y end
         if a.x ~= b.x then return a.x < b.x end
+        if a.y ~= b.y then return a.y < b.y end
         return tieBreak(a, b)
     end)
-    local rows = {}
+    local columns = {}
     for _, entry in ipairs(entries) do
-        local row = rows[#rows]
-        -- Anchor each row at its topmost centre; do not chain staggered rows together.
-        if not row or entry.y - row.y > math.min(row.height, entry.height) / 2 then
-            row = { y = entry.y, height = entry.height, entries = {} }
-            rows[#rows + 1] = row
+        local column = columns[#columns]
+        -- Anchor each column at its leftmost centre; do not chain staggered columns together.
+        if not column or entry.x - column.x > math.min(column.width, entry.width) / 2 then
+            column = { x = entry.x, width = entry.width, entries = {} }
+            columns[#columns + 1] = column
         end
-        row.entries[#row.entries + 1] = entry
-        row.height = math.min(row.height, entry.height)
+        column.entries[#column.entries + 1] = entry
+        column.width = math.min(column.width, entry.width)
     end
     local ordered = {}
-    for _, row in ipairs(rows) do
-        table.sort(row.entries, function(a, b)
-            if a.x ~= b.x then return a.x < b.x end
+    for _, column in ipairs(columns) do
+        table.sort(column.entries, function(a, b)
             if a.y ~= b.y then return a.y < b.y end
+            if a.x ~= b.x then return a.x < b.x end
             return tieBreak(a, b)
         end)
-        for _, entry in ipairs(row.entries) do ordered[#ordered + 1] = entry.candidate end
+        for _, entry in ipairs(column.entries) do ordered[#ordered + 1] = entry.candidate end
     end
     return ordered, 1
 end

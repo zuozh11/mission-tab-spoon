@@ -55,19 +55,20 @@ for i,xy in ipairs({{0,0},{100,0},{200,0},{0,100},{100,100},{200,100}}) do
 end
 local input={grid[6],grid[3],grid[4],grid[2],grid[1],grid[5]}
 local sorted,start=mc.order(input)
+local expected={1,4,2,5,3,6}
 for i=1,6 do
-    check(sorted[i].id==i, 'navigate left to right, then top to bottom')
-    check(sorted[(i % 6)+1].id==(i % 6)+1, 'forward wraps after the bottom-right window')
-    check(sorted[((i-2) % 6)+1].id==((i-2) % 6)+1, 'reverse follows the full reading order')
+    check(sorted[i].id==expected[i], 'visit each column top to bottom, then move right')
+    check(sorted[(i % 6)+1].id==expected[(i % 6)+1], 'forward wraps after the bottom-right window')
+    check(sorted[((i-2) % 6)+1].id==expected[((i-2) % 6)+1], 'reverse follows the full reading order')
 end
 check(start==1 and input[1].id==6, 'start at upper-left without mutating the snapshot')
 local staggered=mc.order({
-    {id=4,frame={x=100,y=130,w=80,h=60}},
-    {id=2,frame={x=100,y=0,w=80,h=60}},
-    {id=3,frame={x=0,y=120,w=80,h=80}},
-    {id=1,frame={x=0,y=10,w=80,h=80}},
+    {id=4,frame={x=130,y=100,w=60,h=80}},
+    {id=2,frame={x=0,y=100,w=60,h=80}},
+    {id=3,frame={x=120,y=0,w=80,h=80}},
+    {id=1,frame={x=10,y=0,w=80,h=80}},
 })
-for i=1,4 do check(staggered[i].id==i, 'uneven thumbnail sizes and offsets retain left-to-right rows') end
+for i=1,4 do check(staggered[i].id==i, 'uneven thumbnail sizes and offsets retain top-to-bottom columns') end
 local stacked=mc.order({
     {id=3,frame={x=0,y=80,w=60,h=60}},
     {id=1,frame={x=0,y=0,w=60,h=60}},
