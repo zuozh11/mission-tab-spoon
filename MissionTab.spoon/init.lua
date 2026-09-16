@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.1.1', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.1.2', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -115,6 +115,13 @@ function obj:_tick()
     if s.mode == 'pending' then return end
     local snapshot = MC.snapshot()
     if snapshot.present and run.ownsMC then run.sawMC = true end
+    if s.mode == 'dismissing' then
+        if not snapshot.present then self:_finish('already-closed'); return end
+        run.openedAt, run.ownsMC, run.sawMC = time, true, true
+        hs.spaces.toggleMissionControl()
+        run.closing, s.mode = time, 'closing'
+        return
+    end
     if s.mode == 'opening' then
         if not run.openedAt then
             if snapshot.present then self:_finish('already-open'); return end
@@ -163,6 +170,20 @@ function obj:_tick()
     if snapshot.backend ~= run.backend or snapshot.pid ~= run.pid then
         self:_cancel('overview-replaced'); return
     end
+    if run.mouseSelection then
+        if #s.directions ~= run.mouseKeyCount then
+            -- A new navigation key returns control to the frozen keyboard order.
+            run.mouseSelection, run.index = false, nil
+            s.mode = 'navigating'
+        else
+            if s.released then
+                run.target = nil -- The system chooses the window under the real pointer.
+                hs.spaces.toggleMissionControl()
+                run.closing, s.mode = time, 'closing'
+            end
+            return
+        end
+    end
     if s.mode == 'navigating' then
         -- The first Tab opens at the recent window. Only later keys move around the layout.
         local offset = s.steps - s.directions[1]
@@ -209,16 +230,16 @@ function obj:_event(e)
     local kind = e:getType()
     if kind == types.mouseMoved or kind == types.leftMouseDown or kind == types.rightMouseDown then
         if self.run and self.run.ownsMC then
-            -- A real pointer gesture hands the overview back to the user.
+            -- Mouse movement changes the selection source, not Command's ownership.
             local motion = math.abs(e:getProperty(properties.mouseEventDeltaX))
                 + math.abs(e:getProperty(properties.mouseEventDeltaY))
-            if kind ~= types.mouseMoved or (motion > 0 and (not self.run.lastPointer
-                or distance(e:location(), self.run.lastPointer) > 3)) then
+            local active = self.session.mode == 'opening' or self.session.mode == 'navigating'
+                or self.session.mode == 'committing'
+            if active and (kind ~= types.mouseMoved or (motion > 0 and (not self.run.lastPointer
+                or distance(e:location(), self.run.lastPointer) > 3))) then
                 self.run.userPointer = true
-                self.run = nil
-                self.session:reset()
-                if self.workTimer then self.workTimer:stop(); self.workTimer = nil end
-                self.lastResult = { reason = 'mouse-takeover', motion = motion }
+                self.run.mouseSelection = true
+                self.run.mouseKeyCount = #self.session.directions
             end
         end
         return false
@@ -228,7 +249,7 @@ function obj:_event(e)
         or keyCode == self.reverseKeyCode and 'grave'
         or keyCode == hs.keycodes.map.escape and 'escape' or tostring(keyCode)
     local inputKind = kind == types.flagsChanged and 'flags' or kind == types.keyUp and 'up' or 'down'
-    if self.session.mode == 'idle' and (self.suspended or self.overviewOpen) then
+    if self.session.mode == 'idle' and self.suspended then
         -- Still consume a matching release from a previously owned key-down.
         if inputKind == 'up' and self.session.swallowed[key] then
             self.session.swallowed[key] = nil
@@ -237,9 +258,13 @@ function obj:_event(e)
         return false
     end
     local previousSerial = self.session.serial
+    local wasIdle = self.session.mode == 'idle'
     local consumed = self.session:handle(inputKind, key, e:getFlags(),
         e:getProperty(properties.keyboardEventAutorepeat) == 1, now())
-    if self.session.serial ~= previousSerial then self.lastResult = nil end
+    if self.session.serial ~= previousSerial then
+        self.lastResult = nil
+        if wasIdle and self.overviewOpen then self.session.mode = 'dismissing' end
+    end
     if self.session.mode == 'replay' then self:_replay(e:getFlags()); return consumed end
     if self.session.mode ~= 'idle' and not self.workTimer then
         local session, serial = self.session, self.session.serial
