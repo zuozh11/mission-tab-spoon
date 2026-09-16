@@ -52,6 +52,20 @@ local function fixture(holdDelay)
             local e=newEvent(kind); e.point=point
             return e
         end}
+    hs.canvas={new=function(frame)
+        local canvas={bounds=frame}
+        function canvas:level(value) self.windowLevel=value; return self end
+        function canvas:behavior(value) self.behaviors=value; return self end
+        function canvas:clickActivating(value) self.activates=value; return self end
+        function canvas:canvasMouseEvents(...) self.mouseEvents={...}; return self end
+        function canvas:mouseCallback(value) self.callback=value; return self end
+        function canvas:appendElements(value) self.element=value; return self end
+        function canvas:frame(value) self.bounds=value; return self end
+        function canvas:show() self.visible=true; return self end
+        function canvas:delete() self.deleted=true; self.visible=false end
+        f.canvas=canvas
+        return canvas
+    end}
     local mc = dofile(root .. 'MissionTab.spoon/mission_control.lua')
     function mc.snapshot()
         local out={present=f.present,backend='WindowManager',pid=f.pid or 7,candidates={}}
@@ -110,6 +124,26 @@ local reverse=fixture(0.18)
 reverse.input(1,48,{cmd=true,shift=true}); reverse.input(2,48,{cmd=true,shift=true}); reverse.input(3,55,{shift=true})
 check(#reverse.posted==6 and reverse.posted[3].flags[2]=='shift' and reverse.posted[6].flags.shift,
     'reverse short replay preserves direction and remaining physical Shift')
+local mask=fixture(); mask.motion=true; mask.begin()
+local canvas=mask.canvas
+check(canvas and canvas.visible and canvas.bounds.x==222 and canvas.element.fillColor.alpha==0.20,
+    'selected thumbnail gets an inset translucent highlight during entry')
+check(not canvas.activates and not canvas.callback and not canvas.mouseEvents[1],
+    'highlight does not activate Hammerspoon or capture native pointer input')
+mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.3)
+check(mask.canvas==canvas and canvas.bounds.x==332, 'one canvas follows selection and moving entry geometry')
+mask.move({x=800,y=800})
+check(canvas.deleted and not mask.spoon.highlight, 'mouse takeover removes keyboard highlight')
+mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.4)
+check(mask.spoon.highlight and mask.spoon.highlight.visible, 'keyboard resumption restores the highlight')
+mask.input(3,55,{})
+check(not mask.spoon.highlight, 'Command release removes highlight before the exit animation')
+local stoppedMask=fixture(); stoppedMask.begin(); local stoppedCanvas=stoppedMask.canvas
+stoppedMask.spoon:stop()
+check(stoppedCanvas.deleted, 'stopping deletes the highlight')
+local cancelMask=fixture(); cancelMask.begin(); local cancelCanvas=cancelMask.canvas
+cancelMask.input(1,53,{cmd=true}); cancelMask.tick(0.3)
+check(cancelCanvas.deleted, 'Escape cleanup removes the highlight')
 local immediate=fixture(); immediate.hoverReadyAt=10; immediate.stuck=true
 immediate.input(1,48,{cmd=true}); immediate.tick(0.03)
 immediate.input(3,55,{}); immediate.tick(0.06)

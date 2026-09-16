@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.14', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.15', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -44,7 +44,29 @@ function obj:diagnose()
     return output
 end
 
+-- Visual feedback only: no mouse callback or tracking, so native hover/clicks pass through.
+function obj:_highlight(target)
+    if not target then
+        if self.highlight then self.highlight:delete(); self.highlight = nil end
+        return
+    end
+    local f = target.frame
+    local frame = { x = f.x + 2, y = f.y + 2, w = math.max(1, f.w - 4), h = math.max(1, f.h - 4) }
+    if not self.highlight then
+        self.highlight = hs.canvas.new(frame):level('overlay')
+            :behavior({ 'canJoinAllSpaces', 'stationary' }):clickActivating(false)
+            :canvasMouseEvents(false, false, false, false):mouseCallback(nil)
+        self.highlight:appendElements({ type = 'rectangle', action = 'fill',
+            fillColor = { red = 0.2, green = 0.55, blue = 1, alpha = 0.20 },
+            roundedRectRadii = { xRadius = 8, yRadius = 8 } })
+    else
+        self.highlight:frame(frame)
+    end
+    self.highlight:show()
+end
+
 function obj:_finish(reason)
+    self:_highlight()
     local resumeQueue = reason == 'committed' or reason == 'native-replay' or (reason == 'cancelled' and self.session.cancelledByUser)
     local run = self.run
     if run and run.ownsMC then self.overviewOpen = MC.snapshot().present end
@@ -70,6 +92,7 @@ function obj:_finish(reason)
 end
 
 function obj:_cancel(reason)
+    self:_highlight()
     local run = self.run
     if not run or not run.ownsMC then self:_finish(reason); return end
     if not MC.snapshot().present then
@@ -192,6 +215,7 @@ function obj:_tick()
             local offset = s.steps - run.stepOrigin
             local index = ((base - 1 + offset) % #candidates) + 1
             local target = candidates[index]
+            if not s.released then self:_highlight(target) end
             if not run.target or run.target.id ~= target.id
                 or hoverChanged(run, target, snapshot) then
                 run.index, run.target = index, target
@@ -214,6 +238,7 @@ function obj:_tick()
         end
     end
     if s.mode == 'closing' then
+        self:_highlight()
         if not snapshot.present then
             if run.focusTarget and not run.focusApplied then
                 run.focusApplied = true
@@ -264,6 +289,7 @@ function obj:_tick()
         local index = ((run.base - 1 + offset) % #run.candidates) + 1
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.candidates[index])
         if not target then self:_cancel('target-disappeared'); return end
+        if not s.released then self:_highlight(target) end
         if run.index ~= index or hoverChanged(run, target, snapshot)
             or (run.hoverRefreshAt and time >= run.hoverRefreshAt) then
             run.index, run.target = index, target
@@ -273,6 +299,7 @@ function obj:_tick()
         if s.released then s.mode = 'committing' end
     end
     if s.mode == 'committing' then
+        self:_highlight()
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.target)
         if not target then self:_cancel('target-disappeared'); return end
         run.focusTarget = target.id and hs.window.get(target.id)
@@ -287,6 +314,7 @@ end
 function obj:_safeTick()
     local ok, err = xpcall(function() self:_tick() end, debug.traceback)
     if not ok then
+        self:_highlight()
         restorePointer(self.run)
         self.log.e(err)
         self.suspended = 'Runtime error; inspect MissionTab log and call start()'
@@ -314,6 +342,7 @@ function obj:_event(e)
                 or math.abs(point.x - run.lastPointer.x) + math.abs(point.y - run.lastPointer.y) > 3)
             and (mode == 'opening' or mode == 'navigating' or mode == 'committing') then
             run.mouseSelection, run.userPointer = true, true
+            self:_highlight()
         end
         return false
     end
@@ -376,6 +405,7 @@ function obj:_event(e)
             self.session.mode = 'opening'
         end
     end
+    if self.session.released then self:_highlight() end
     if self.session.serial ~= previousSerial then
         self.lastResult = nil
         if wasIdle and self.overviewOpen then self.session.mode = 'dismissing' end
@@ -427,6 +457,7 @@ function obj:start()
 end
 
 function obj:stop()
+    self:_highlight()
     self.queuedSessions = {}
     self.restartAfterCleanup = false
     if self.tap then self.tap:stop(); self.tap = nil end
