@@ -121,23 +121,41 @@ for _,shift in ipairs({false,true}) do
     entry.input(1,48,{cmd=true,shift=shift}); entry.input(2,48,{cmd=true,shift=shift})
     entry.tick(0.03); entry.tick(0.2); entry.tick(0.4)
     entry.motion=false; entry.ready(); entry.tick(0.9)
-    check(entry.pointer.x==900 and entry.pointer.y==900 and #entry.posted==0,
-        'entry and delayed hover refresh preserve pointer for either navigation direction')
-    check(entry.spoon.run.target.id==2 and entry.spoon.highlight,
-        'entry still selects and highlights the MRU window')
+    check(entry.pointer.x==125 and entry.pointer.y==25 and #entry.posted>0,
+        'entry and delayed hover refresh locate the focused window for either direction')
+    check(entry.spoon.run.target.id==1 and entry.spoon.highlight,
+        'entry selects and highlights the focused window')
     entry.input(3,55,{}); entry.tick(0.93); entry.tick(0.96)
-    check(entry.focused==2 and entry.spoon:status().lastResult.matched,
-        'entry selection confirms by window ID without initial pointer placement')
+    check(entry.focused==1 and entry.spoon:status().lastResult.matched,
+        'entry selection confirms by window ID after initial pointer placement')
 end
 local reverseMask=fixture(); reverseMask.begin(); reverseMask.ready()
 local originalCanvas=reverseMask.canvas
-for _,id in ipairs({1,3,2,1}) do
+for _,id in ipairs({3,2,1,3}) do
     reverseMask.input(1,50,{cmd=true}); reverseMask.input(2,50,{cmd=true}); reverseMask.tick(reverseMask.time+0.03)
     check(reverseMask.spoon.run.target.id==id and reverseMask.canvas.element.frame.x==id*100,
         'reverse selection and drawn mask point to the same window')
     check(reverseMask.canvas==originalCanvas and reverseMask.canvas.frameUpdates==0,
         'reverse navigation never moves or resizes the visible native overlay')
 end
+local focusedEntry=fixture(); focusedEntry.focused=3
+focusedEntry.begin(); focusedEntry.ready()
+check(focusedEntry.spoon.run.target.id==3 and focusedEntry.pointer.x==325,
+    'entry prioritizes actual focus even when orderedWindows lists another window first')
+local missingFocus=fixture(); missingFocus.removed=1
+missingFocus.begin(); missingFocus.ready()
+check(missingFocus.spoon.run.target.id==2,
+    'entry falls back to a recent visible window when focus is absent from overview')
+local exitPointer=fixture(); exitPointer.motion=true; exitPointer.begin()
+local thumbnailPointer=exitPointer.pointer
+exitPointer.input(3,55,{}); exitPointer.tick(0.23); exitPointer.tick(0.26)
+check(exitPointer.spoon:status().state=='idle' and exitPointer.pointer==thumbnailPointer,
+    'confirmation preserves thumbnail pointer instead of centering it on the desktop window')
+local mouseExit=fixture(); mouseExit.begin(); mouseExit.ready()
+mouseExit.move({x=800,y=800}); mouseExit.input(3,55,{})
+mouseExit.tick(0.6); mouseExit.tick(0.63)
+check(mouseExit.spoon:status().state=='idle' and mouseExit.pointer.x==800 and mouseExit.pointer.y==800,
+    'mouse confirmation preserves the user pointer position after exit')
 local movingEntry=fixture(); movingEntry.motion=true; movingEntry.begin()
 movingEntry.tick(0.5); movingEntry.tick(2)
 check(movingEntry.present and movingEntry.toggles==0 and not movingEntry.spoon.suspended,
@@ -152,7 +170,7 @@ missedRelease.spoon.health.callback(); missedRelease.tick(0.6); missedRelease.ti
 check(missedRelease.spoon:status().lastResult.reason=='committed',
     'tap recovery confirms when Command was actually released while the tap was disabled')
 movingEntry.input(1,50,{cmd=true}); movingEntry.input(2,50,{cmd=true}); movingEntry.tick(2.03)
-check(movingEntry.spoon.run.target.id==1 and movingEntry.present,
+check(movingEntry.spoon.run.target.id==3 and movingEntry.present,
     'reverse navigation still works after freezing a moving entry layout at its deadline')
 movingEntry.input(3,55,{}); movingEntry.tick(2.06); movingEntry.tick(2.1)
 check(movingEntry.spoon:status().lastResult.matched,
@@ -177,16 +195,16 @@ for _, duringEntry in ipairs({true, false}) do
     check(overlap.pointer==pointer and #overlap.posted==posted,
         'occluded selection never moves pointer to an unsafe thumbnail')
     overlap.input(3,55,{}); overlap.tick(2.03); overlap.tick(2.06)
-    check(overlap.focused==2 and overlap.spoon:status().lastResult.matched,
+    check(overlap.focused==1 and overlap.spoon:status().lastResult.matched,
         'occluded target still confirms by window ID on Command release')
 end
 local temporaryOverlap=fixture(); temporaryOverlap.occluded=true
 temporaryOverlap.begin(); temporaryOverlap.ready()
 temporaryOverlap.occluded=false; temporaryOverlap.tick(0.6)
-check(temporaryOverlap.pointer.x==900 and temporaryOverlap.toggles==0,
-    'entry preserves the pointer even when a thumbnail becomes safe to hover')
+check(temporaryOverlap.pointer.x==125 and temporaryOverlap.toggles==0,
+    'entry locates the focused thumbnail once it becomes safe to hover')
 temporaryOverlap.input(1,48,{cmd=true}); temporaryOverlap.input(2,48,{cmd=true}); temporaryOverlap.tick(0.63)
-check(temporaryOverlap.spoon.run.target.id==3 and temporaryOverlap.pointer.x==325 and temporaryOverlap.toggles==0,
+check(temporaryOverlap.spoon.run.target.id==2 and temporaryOverlap.pointer.x==225 and temporaryOverlap.toggles==0,
     'navigation continues after temporary thumbnail overlap')
 native.input(1,48,{cmd=true}); native.input(2,48,{cmd=true}); native.tick(0.08)
 native.input(3,55,{})
@@ -215,13 +233,13 @@ check(#reverse.posted==6 and reverse.posted[3].flags[2]=='shift' and reverse.pos
     'reverse short replay preserves direction and remaining physical Shift')
 local mask=fixture(); mask.motion=true; mask.begin()
 local canvas=mask.canvas
-check(canvas and canvas.visible and canvas.element.frame.x==220 and canvas.element.frame.y==0
+check(canvas and canvas.visible and canvas.element.frame.x==120 and canvas.element.frame.y==0
     and canvas.element.frame.w==50 and canvas.element.frame.h==50 and canvas.element.fillColor.alpha==0.20,
     'selected thumbnail gets a full-size translucent highlight without margins during entry')
 check(not canvas.activates and not canvas.callback and not canvas.mouseEvents[1],
     'highlight does not activate Hammerspoon or capture native pointer input')
 mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.3)
-check(mask.canvas==canvas and canvas.element.frame.x==330, 'one canvas follows selection and moving entry geometry')
+check(mask.canvas==canvas and canvas.element.frame.x==230, 'one canvas follows selection and moving entry geometry')
 mask.move({x=800,y=800}); mask.tick(0.32)
 check(canvas.deleted and not mask.spoon.highlight, 'moving into blank space removes the highlight')
 mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.4)
@@ -275,17 +293,17 @@ check(topology.spoon:status().state=='cancelling', 'disconnecting a display stil
 local immediate=fixture(); immediate.hoverReadyAt=10; immediate.stuck=true
 immediate.input(1,48,{cmd=true}); immediate.tick(0.03)
 immediate.input(3,55,{}); immediate.tick(0.06)
-check(immediate.toggles==1 and immediate.focused==2 and immediate.present,
+check(immediate.toggles==1 and immediate.focused==1 and immediate.present,
     'release requests exit and target focus on first snapshot before animation or hover readiness')
 immediate.tick(0.09)
 check(immediate.toggles==1, 'closing animation does not trigger repeated exit requests')
-immediate.present=false; immediate.focused=1; immediate.tick(0.12)
-check(immediate.focused==2 and immediate.spoon:status().state=='idle',
+immediate.present=false; immediate.focused=3; immediate.tick(0.12)
+check(immediate.focused==1 and immediate.spoon:status().state=='idle',
     'exit reapplies target focus and releases input without diagnostic delay')
 check(immediate.input(1,48,{cmd=true}), 'next gesture is accepted immediately after exit')
 local settled=fixture(); settled.begin(); settled.ready(); settled.stuck=true
 settled.input(3,55,{}); settled.tick(0.55)
-check(settled.focused==2 and settled.toggles==1, 'settled release skips pending hover refresh and hover delay')
+check(settled.focused==1 and settled.toggles==1, 'settled release skips pending hover refresh and hover delay')
 local sequence=fixture(); sequence.begin(); sequence.input(3,55,{})
 sequence.stuck=true; sequence.tick(0.21)
 check(sequence.input(1,48,{cmd=true}), 'exit animation accepts the next gesture')
@@ -302,7 +320,7 @@ check(sequence.present, 'existing worker continues with the new session')
 sequence.tick(0.3); sequence.tick(0.33)
 check(sequence.focused==2 and sequence.spoon:status().state=='opening', 'second gesture confirms its own navigation and advances queue')
 sequence.tick(0.36); sequence.tick(0.39); sequence.tick(0.42)
-check(sequence.toggles==3 and sequence.focused==1 and sequence.spoon:status().state=='idle',
+check(sequence.toggles==3 and sequence.focused==2 and sequence.spoon:status().state=='idle',
     'all three gestures finish without lost input or native replay')
 local cancelled=fixture(); cancelled.begin(); cancelled.input(3,55,{}); cancelled.stuck=true; cancelled.tick(0.21)
 cancelled.input(1,48,{cmd=true}); cancelled.input(2,48,{cmd=true}); cancelled.input(1,53,{cmd=true})
@@ -315,10 +333,10 @@ check(failed.spoon:status().suspended and #failed.spoon.queuedSessions==0, 'clos
 check(failed.input(2,48,{}), 'failed queue still consumes its matching key release')
 local moving=fixture(); moving.motion=true; moving.begin()
 moving.input(1,48,{cmd=true}); moving.input(2,48,{cmd=true}); moving.tick(0.3)
-check(moving.spoon:status().state=='opening' and moving.spoon.run.target.id==3,
+check(moving.spoon:status().state=='opening' and moving.spoon.run.target.id==2,
     'navigation updates the selected target while entry frames are still moving')
 moving.input(3,55,{}); moving.tick(0.33)
-check(moving.focused==3 and moving.toggles==1, 'release confirms without waiting for moving entry frames to settle')
+check(moving.focused==2 and moving.toggles==1, 'release confirms without waiting for moving entry frames to settle')
 local held=fixture(); held.begin(); held.input(3,55,{}); held.stuck=true; held.tick(0.21)
 held.input(1,48,{cmd=true}); held.input(2,48,{cmd=true}); held.input(3,55,{})
 held.input(1,48,{cmd=true}); held.input(2,48,{cmd=true})
@@ -347,9 +365,9 @@ check(interrupted.spoon:status().state=='idle' and #interrupted.spoon.queuedSess
 local delayed=fixture(); delayed.hoverID=1; delayed.hoverReadyAt=0.7
 delayed.begin(); delayed.ready()
 delayed.input(1,48,{cmd=true}); delayed.input(2,48,{cmd=true}); delayed.tick(0.57)
-check(delayed.pointer.x==325 and delayed.hoverID==1, 'navigation pointer placement can precede native hover readiness')
+check(delayed.pointer.x==225 and delayed.hoverID==1, 'navigation pointer placement can precede native hover readiness')
 delayed.tick(0.8)
-check(delayed.hoverID==3, 'stationary target receives native hover refresh after opening settles')
+check(delayed.hoverID==2, 'stationary target receives native hover refresh after opening settles')
 local posted=#delayed.posted
 delayed.tick(1); delayed.tick(1.2)
 check(#delayed.posted==posted, 'opening refresh ends without an endless event stream')
@@ -360,34 +378,34 @@ check(not f.input(1,48,{cmd=true},0x4D544142), 'self-generated event never reent
 f.tick(0.03)
 check(f.present, 'short press opens on first worker tick without a hold delay')
 f.ready(); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
-check(f.spoon:status().lastResult.matched and f.focused==2, 'short press confirms the overview target')
+check(f.spoon:status().lastResult.matched and f.focused==1, 'short press confirms the overview target')
 f=fixture(); f.input(1,48,{cmd=true}); f.input(3,55,{})
 f.tick(0.03)
 check(f.present, 'Command release before Tab release still opens overview')
 check(f.input(2,48,{}), 'late Tab release consumed')
 f=fixture(); f.begin(); f.input(3,55,{}); f.tick(0.21)
-check(f.spoon:status().state=='closing' and f.focused==2, 'release during opening confirms at first candidate without waiting for layout')
+check(f.spoon:status().state=='closing' and f.focused==1, 'release during opening confirms at first candidate without waiting for layout')
 f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
-check(f.spoon:status().lastResult.matched and f.focused==2, 'early release commits exactly selected recent window')
-check(f.toggles==1 and f.pointer.x==225, 'one toggle and pointer centred on confirmed window')
+check(f.spoon:status().lastResult.matched and f.focused==1, 'early release commits exactly selected focused window')
+check(f.toggles==1 and f.pointer.x==125, 'one toggle and pointer remains at the selected thumbnail')
 f.input(1,48,{cmd=true}); f.input(2,48,{cmd=true}); f.input(3,55,{})
 check(f.spoon:status().lastResult==nil, 'new short gesture clears the old selected target')
 f=fixture(); f.begin(); f.ready(); f.input(1,50,{cmd=true}); f.input(2,50,{cmd=true}); f.tick(0.6)
 f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
-check(f.focused==1, 'reverse navigation returns to original window')
-f=fixture(); f.begin(); f.ready(); f.removed=2; f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
+check(f.focused==3, 'reverse navigation wraps from the focused window')
+f=fixture(); f.begin(); f.ready(); f.removed=1; f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
 check(f.spoon:status().lastResult.reason=='target-disappeared' and f.focused==1, 'missing target cancels and restores original')
 for _, key in ipairs({13, 12}) do -- W / Q: native shortcut remains untouched.
     local closed=fixture(); closed.begin(); closed.ready()
     check(not closed.input(1,key,{cmd=true}) and not closed.input(2,key,{cmd=true}),
         'close shortcut passes through while Command remains held')
-    closed.removed=2; closed.tick(0.6); closed.tick(0.63); closed.tick(0.66)
-    check(closed.present and closed.toggles==0 and closed.spoon.run.target.id==3,
+    closed.removed=1; closed.tick(0.6); closed.tick(0.63); closed.tick(0.66)
+    check(closed.present and closed.toggles==0 and closed.spoon.run.target.id==2,
         'closing selected window keeps overview open and selects next survivor')
     closed.input(1,48,{cmd=true}); closed.input(2,48,{cmd=true}); closed.tick(0.69)
-    check(closed.spoon.run.target.id==1, 'navigation continues through refreshed window order')
+    check(closed.spoon.run.target.id==3, 'navigation continues through refreshed window order')
     closed.input(3,55,{}); closed.tick(0.72); closed.tick(0.75)
-    check(closed.spoon:status().lastResult.matched and closed.focused==1,
+    check(closed.spoon:status().lastResult.matched and closed.focused==3,
         'Command release still confirms after closing a window')
 end
 for _, opening in ipairs({true, false}) do
@@ -403,11 +421,11 @@ for _, opening in ipairs({true, false}) do
 end
 local otherClosed=fixture(); otherClosed.begin(); otherClosed.ready(); otherClosed.removed=3
 otherClosed.tick(0.6)
-check(otherClosed.spoon.run.target.id==2 and otherClosed.toggles==0,
+check(otherClosed.spoon.run.target.id==1 and otherClosed.toggles==0,
     'closing another window preserves the current selection')
 otherClosed.input(1,48,{cmd=true}); otherClosed.input(2,48,{cmd=true})
 otherClosed.tick(0.63); otherClosed.tick(0.66); otherClosed.tick(0.69)
-check(otherClosed.spoon.run.target.id==1 and otherClosed.toggles==0,
+check(otherClosed.spoon.run.target.id==2 and otherClosed.toggles==0,
     'navigation skips a previously closed window without cancelling')
 f=fixture(); f.begin(); f.ready(); f.input(1,53,{cmd=true}); f.tick(0.6); f.input(3,55,{}); f.tick(0.8); f.tick(1)
 check(f.focused==1 and f.spoon:status().state=='idle', 'Esc cancels without later release committing')
@@ -445,10 +463,10 @@ f.present=true; f.spoon.cleanup.callback(); f.time=0.6; f.spoon.cleanup.callback
 check(f.spoon:status().running and not f.present, 'restart resumes only after old overview closes')
 f=fixture(); f.begin(); f.ready(); f.input(1,48,{cmd=true}); f.input(2,48,{cmd=true}); f.tick(0.6)
 f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
-check(f.focused==3, 'Tab advances spatially clockwise from the recent initial window')
+check(f.focused==2, 'Tab advances spatially from the focused initial window')
 f=fixture(); f.input(1,48,{cmd=true}); f.input(2,48,{cmd=true}); f.input(1,48,{cmd=true}); f.input(2,48,{cmd=true})
 f.tick(0.03); f.tick(0.2); f.ready(); f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
-check(f.focused==3, 'queued Tab advances once after recent initial selection')
+check(f.focused==2, 'queued Tab advances once after focused initial selection')
 
 local opened=fixture(0.18); opened.present=true
 opened.input(1,48,{cmd=true}); opened.input(2,48,{cmd=true}); opened.tick(0.03)
@@ -490,6 +508,6 @@ movingPoint.input(1,48,{cmd=true}); movingPoint.input(2,48,{cmd=true}); movingPo
 movingPoint.motion=true
 local points=movingPoint.pointCalls
 movingPoint.tick(1)
-check(movingPoint.pointCalls-points==1 and movingPoint.pointer.x==425,
+check(movingPoint.pointCalls-points==1 and movingPoint.pointer.x==325,
     'moving target calculates one safe point and still moves the pointer to that point')
 return {passed=true,assertions=count}

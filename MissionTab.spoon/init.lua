@@ -143,9 +143,6 @@ function obj:_cancel(reason)
 end
 
 function obj:_hover(point, time)
-    -- Entry selects and highlights the MRU window without moving the user's pointer.
-    -- Only subsequent navigation keys opt into pointer-based native hover feedback.
-    if #self.session.directions == 1 then return end
     -- Overlap can hide every safe hover point, especially during layout changes.
     -- Keep keyboard selection: confirmation uses the window ID, not the pointer.
     if not point then return end
@@ -198,7 +195,7 @@ function obj:_tick()
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self:_finish('pointer-screen-unavailable'); return end
-        local recent = {}
+        local recent = original and { original:id() } or {}
         for _, window in ipairs(hs.window.orderedWindows()) do
             if not original or window:id() ~= original:id() then recent[#recent + 1] = window:id() end
         end
@@ -309,15 +306,8 @@ function obj:_tick()
                 if not run.focusTarget:id() then self:_finish('target-disappeared'); return end
                 run.focusTarget:focus()
             end
-            -- Centre and release the session as soon as the overview disappears.
-            if not run.cancelReason and not run.pointerCentered then
-                local window = run.focusTarget or hs.window.focusedWindow()
-                local frame = window and window:frame()
-                if frame and frame.w > 0 and frame.h > 0 then
-                    hs.mouse.absolutePosition({ x = frame.x + frame.w / 2, y = frame.y + frame.h / 2 })
-                    run.pointerMoved, run.pointerCentered = false, true
-                end
-            end
+            -- Confirmation keeps the pointer where navigation or the user left it.
+            if not run.cancelReason then run.pointerMoved = false end
             if not run.cancelReason then
                 local focused = hs.window.focusedWindow()
                 local actual = focused and focused:id()
