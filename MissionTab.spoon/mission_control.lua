@@ -164,15 +164,24 @@ function MC.pointerIndex(snapshot, ordered, point)
             hit = hit:attributeValue('AXParent')
         end
     end
-    -- A unique rectangle is unambiguous; overlapping rectangles need an AX hit.
-    local found
+    -- Measure distance to the thumbnail edge, using its centre to break ties.
+    local found, hits, nearest = nil, 0, 1
+    local bestDistance, bestCentre = math.huge, math.huge
     for i, candidate in ipairs(ordered) do
-        if contains(candidate.frame, point) then
-            if found then return 1, false end
-            found = i
+        local frame = candidate.frame
+        if contains(frame, point) then found, hits = i, hits + 1 end
+        local dx = math.max(frame.x - point.x, 0, point.x - frame.x - frame.w)
+        local dy = math.max(frame.y - point.y, 0, point.y - frame.y - frame.h)
+        local distance = dx * dx + dy * dy
+        local centre = (point.x - frame.x - frame.w / 2)^2
+            + (point.y - frame.y - frame.h / 2)^2
+        if distance < bestDistance or (distance == bestDistance and centre < bestCentre) then
+            nearest, bestDistance, bestCentre = i, distance, centre
         end
     end
-    return found or 1, found ~= nil
+    if hits == 1 then return found, true end
+    return nearest, false
+
 end
 
 function MC.find(snapshot, target)

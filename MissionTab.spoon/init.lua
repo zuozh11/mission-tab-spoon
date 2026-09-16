@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.8', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.9', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -163,7 +163,7 @@ function obj:_tick()
             else
                 local hit
                 base, hit = MC.pointerIndex(scoped, candidates, run.pointer)
-                -- A resumed navigation key advances from an actual hover; blank space starts at item one.
+                -- A resumed navigation key advances from an actual hover; blank space selects the nearest thumbnail.
                 run.stepOrigin = run.resumeSteps - (hit and run.resumeDirection or 0)
             end
         end
