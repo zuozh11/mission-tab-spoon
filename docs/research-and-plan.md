@@ -1,0 +1,102 @@
+# MissionTab 调研与实施方案
+
+日期：2026-09-16。本文件保留调研依据；实施验证与修正见 [验证记录](verification.md)。
+
+## 结论
+
+可以用 Hammerspoon Spoon 实现「短按保留原生应用切换，长按进入 Mission Control，键盘选择窗口，松开 Command 确认」。本机已验证窗口枚举、缩略图坐标读取及悬停后退出激活目标的核心链路。
+
+macOS 27 的实现必须适配 WindowManager 的辅助功能树，不能直接照搬 PaperWM 的 Dock 路径。推荐第一版采用 **WindowManager 枚举 + 鼠标悬停预览 + toggle 确认**。AXPress 保留为实验策略，不做无条件自动重试。
+
+短按保留的是原生「最近使用的应用」语义；长按选择的是窗口。短按是否完全保留手感，还需真实键盘事件测试。
+
+## 证据与边界
+
+### 本机实测
+
+环境：macOS 27.0，build 26A428；Hammerspoon 1.1.1；单显示器；辅助功能权限可用；测试时 Secure Input 未开启。
+
+| 探测 | 结果 | 对方案的影响 |
+| --- | --- | --- |
+| `hs.spaces.openMissionControl()` | 出现 Mission Control AX 节点 | 可用于发起打开，仍须异步等待就绪 |
+| Dock → `mc` | 节点存在，但无子元素 | 旧路径在本机不可用 |
+| Dock 增强辅助功能模式 | 在 0.2、0.5、1、2 秒采样均无子元素 | 延长等待或开启增强模式未解决旧路径问题；已恢复原设置 |
+| WindowManager → `mc.display` | 直接包含 4 个窗口按钮及 `mc.spaces` | 新版本从这里枚举，排除桌面控制项 |
+| 窗口按钮属性 | 包含 `AXFrame`、`AXTitle`、`wid`，支持 `AXPress` | 可按窗口 ID 关联，坐标来自缩略图 |
+| 移动鼠标到窗口中心，250 ms 后 toggle | 目标 `wid=77`，退出后焦点窗口 ID 为 77；MC 节点消失 | 核心悬停确认链路通过一次实测 |
+| AXPress：Ghostty | 目标及退出后窗口 ID 均为 77，MC 节点消失 | 该窗口直接确认成功 |
+| AXPress：Mole | 目标 ID 1944，退出后焦点 ID 1979，MC 节点消失 | 未通过精确目标验证；是否应用换窗尚未查明 |
+
+每次探测后均安排恢复原焦点；涉及指针移动的探测恢复了原位置。没有修改 Hammerspoon 启动配置或安装事件拦截器。
+
+以上确认了本机当前布局的可行性，不等于完成多窗口、多屏和真实 Command 长按验收。所有动作探测均在未持续物理按住 Command 的情况下进行。
+
+### 源码与文档核实
+
+- [PaperWM mission_control.lua](https://github.com/mogenson/PaperWM.spoon/blob/main/mission_control.lua)：使用 Dock → `mc` → `mc.display` → `mc.windows`，并通过缩略图 `AXFrame` 和合成鼠标事件操作。其标题匹配与阻塞等待不适合直接移植。
+- [Hammerspoon spaces.lua](https://github.com/Hammerspoon/hammerspoon/blob/master/extensions/spaces/spaces.lua)：open/close 都是先检查 Dock 的 `mc`，再调用 toggle；toggle 发送 `com.apple.expose.awake`。close 并非另一种独立的确认机制。这些接口及 AX 结构属于易受系统版本影响的依赖。
+- [hs.eventtap.event](https://www.hammerspoon.org/docs/hs.eventtap.event.html)：支持 keyDown、keyUp、flagsChanged、事件属性和合成输入，可实现长短按判定与事件标记。
+- [hs.eventtap](https://www.hammerspoon.org/docs/hs.eventtap.html)：Secure Input 会阻止键盘拦截，须纳入运行状态处理。
+- [hs.axuielement](https://www.hammerspoon.org/docs/hs.axuielement.html)：提供属性读取、有效性检查及动作调用。
+
+## 交互决策
+
+以下作为第一版默认值，属于设计选择，尚未经过手感验证。
+
+| 输入/场景 | 行为 |
+| --- | --- |
+| 第一次 Command+Tab | 吞掉 Tab down/up，保存起始窗口、指针位置与时间；正常放行物理修饰键事件 |
+| 阈值前松开 Command | 回放完整原生切换序列；不等待剩余阈值 |
+| Tab 已松开，Command 仍按住，距首次 Tab down 达到 180 ms | 打开调度中心；若 Tab 松开时已超过阈值，立即开始打开 |
+| Tab 一直按住 | 不进入长按分支；自动重复不作为多次主动导航 |
+| 等待期间主动多次 Tab | 记录步数；短按分支回放对应原生步数，长按分支应用到窗口选择 |
+| 已进入调度中心，Tab / 反引号 | 下一个 / 上一个窗口，循环；兼容 Shift+Tab 反向 |
+| 松开 Command | 确认当前窗口；左右 Command 均松开才算结束 |
+| Esc | 取消选择，退出后恢复起始窗口；不回放短按 |
+| 用户手动点击或退出 MC | 结束当前会话，不在随后松开 Command 时再次确认 |
+| 打开失败、没有候选或权限失效 | 清理本次会话；打开失败且尚未导航时可在 Command 松开后回放原生切换 |
+
+候选范围：本次 Mission Control 实际展示的窗口，涵盖已识别显示器的当前桌面。第一版不主动遍历其他 Space，不把桌面按钮、全屏 Space 或最小化窗口强行加入窗口列表。
+
+排序：打开前记录窗口最近使用顺序，使用 `wid` 关联缩略图；默认选最近使用的其他窗口。未匹配的候选按显示器位置、缩略图位置排序追加。本次会话冻结顺序，避免悬停时跳项。若 `wid` 缺失，使用本次 AX 元素身份及几何顺序，不以标题模糊匹配执行窗口确认。
+
+鼠标导航先设置实际指针位置，再发送明确清除修饰键的 `mouseMoved` 事件；应用分组导致缩略图重叠时，取不被其他窗口覆盖的区域，无法安全定位时取消。当前窗口使用系统悬停效果。若实际长按时系统高亮不足，再增加不抢焦点、不接收点击的边框。
+
+## 实现结构
+
+```text
+MissionTab.spoon/
+  init.lua              配置、start/stop、生命周期
+  session.lua           状态机、长短按、导航及提交规则
+  input.lua             事件拦截、物理修饰键跟踪、原生回放
+  mission_control.lua   WindowManager/Dock 能力探测、枚举、确认与退出
+  candidates.lua        窗口 ID 关联、顺序冻结与目标失效处理
+```
+
+状态为 `idle → pending → opening → navigating → committing → closing → idle`；另有短按回放和取消路径。所有计时器绑定会话编号，旧回调不得作用于新会话。
+
+- 事件回调仅解析、缓存和调度。避免在其中遍历 AX 树或阻塞等待动画。
+- 打开后异步轮询有效候选及稳定几何；初始轮询间隔建议 30 ms，超时 1.5 秒，可调。稳定条件与实际延迟需要实测调整。
+- opening 期间累积导航步数；Command 提前松开时设置待确认，候选就绪后仅提交一次。
+- 导航时重读所选元素的坐标和有效性。确认前再校验 MC 仍打开、目标仍存在；目标消失时取消，不点旧坐标。
+- 指针移到目标的可见区域后等待系统处理，再退出；250 ms 仅是当前成功探测使用值，生产值需测量，不直接视为最低必要延迟。
+- 退出后通过 MC 消失和焦点 ID 核实结果。焦点不符时记录诊断，不盲目补发点击或 AXPress。
+- 只有确认退出后才恢复指针；若用户主动移动了鼠标，则保留用户的新位置。
+- 合成键盘事件使用 `eventSourceUserData` 标记防重入；回放包括正确的修饰键按下/释放，并处理物理 Tab 迟到的 keyUp，避免孤立事件和修饰键卡住。
+- 检查 Secure Input、event tap 停用、Dock/WindowManager 重启、屏幕变化、睡眠及 Spoon stop；统一停止计时器并清理会话。未知系统结构时停用接管，保留原生快捷键。
+- 按能力探测选择 WindowManager 新结构或 Dock 旧结构；第一版验收目标仅为当前 macOS 27，旧版本兼容需独立验证。
+
+## 实施顺序与验收
+
+1. **先做不接管 Command+Tab 的诊断原型。** 固化新结构枚举和确认；在同一应用多个窗口、重名窗口、真实按住 Command、多屏下核实 `wid`、AXFrame、悬停激活。重复切换至少 20 次并记录目标/实际窗口 ID。Mole 的 ID 变化单独复现。
+2. **接入状态机与事件拦截。** 对状态转换写纯 Lua 测试，覆盖阈值边界、双 Command、提前释放、连续导航、迟到 keyUp、自生成事件、超时及取消。实机验证短按回放不会停留在原生切换器或闪出 MC。
+3. **完成 Spoon 生命周期和故障恢复。** 验证 stop/reload、权限不可用、进程重启、显示器变化、窗口关闭、用户鼠标接管。清理后原生快捷键应立即可用。
+4. **调优手感。** 分别记录长按识别延迟、MC 可操作延迟、松手到激活延迟，再调整 180 ms 与悬停等待；正常动画和减少动态效果分别测试。
+
+进入正式默认启用的条件：短按语义通过、多次重复确认准确、真实 Command 长按不改变打开行为、取消/异常不留下键盘或鼠标状态。当前调研已满足进入第 1 步原型验证的条件。
+
+## 实施决策补充
+
+- 用户于本轮明确授权开始实施。实施采用三个模块：`init.lua` 负责输入及生命周期，`session.lua` 负责纯状态机，`mission_control.lua` 负责 AX 与几何规则；没有为单一消费者额外拆出输入、候选模块。
+- 本机 AltTab 同样绑定 Command+Tab；实测会争抢焦点。正式验收须退出 AltTab；没有修改其偏好设置。
+- 初期循环结果受 AltTab 干扰，仅作调试记录，最终验收结果以退出 AltTab 后的测试为准。
