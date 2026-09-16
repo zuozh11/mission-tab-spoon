@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Command-Tab opens Mission Control; release Command to confirm the selected window.
-local obj = { name = 'MissionTab', version = '0.2.11', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.12', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -130,7 +130,7 @@ function obj:_tick()
             return
         end
         -- Preview as soon as AX exposes a usable frame; keep following it during animation.
-        -- Stabilization only freezes the clockwise order and permits confirmation.
+        -- Stabilization freezes navigation order; release can confirm a live target earlier.
         local scoped = MC.onScreen(snapshot, run.screenID, run.screenFrame)
         local candidates, base = MC.order(scoped.candidates)
         if base then
@@ -156,10 +156,13 @@ function obj:_tick()
             if not run.target or run.target.id ~= target.id
                 or hoverChanged(run, target, snapshot) then
                 run.index, run.target = index, target
-                if not self:_hover(target, time, snapshot) then return end
+                if not s.released and not self:_hover(target, time, snapshot) then return end
             end
         end
-        if MC.stable(run.previous, scoped) then
+        if s.released and (base or (run.mouseSelection and snapshot.present)) then
+            run.backend, run.pid = snapshot.backend, snapshot.pid
+            s.mode = run.mouseSelection and 'navigating' or 'committing'
+        elseif MC.stable(run.previous, scoped) then
             run.candidates, run.base = candidates, base
             run.backend, run.pid = snapshot.backend, snapshot.pid
             -- AX frames can settle before native hover tracking is ready.
@@ -177,9 +180,8 @@ function obj:_tick()
                 run.focusApplied = true
                 if not run.focusTarget:id() then self:_finish('target-disappeared'); return end
                 run.focusTarget:focus()
-                run.goneAt = now()
             end
-            -- Centre immediately on exit; only the diagnostic focus check waits.
+            -- Centre and release the session as soon as the overview disappears.
             if not run.cancelReason and not run.pointerCentered then
                 local window = run.focusTarget or hs.window.focusedWindow()
                 local frame = window and window:frame()
@@ -188,8 +190,6 @@ function obj:_tick()
                     run.pointerMoved, run.pointerCentered = false, true
                 end
             end
-            run.goneAt = run.goneAt or time
-            if time - run.goneAt < 0.15 then return end
             if not run.cancelReason then
                 local focused = hs.window.focusedWindow()
                 local actual = focused and focused:id()
@@ -228,7 +228,7 @@ function obj:_tick()
         if run.index ~= index or hoverChanged(run, target, snapshot)
             or (run.hoverRefreshAt and time >= run.hoverRefreshAt) then
             run.index, run.target = index, target
-            if not self:_hover(target, time, snapshot) then return end
+            if not s.released and not self:_hover(target, time, snapshot) then return end
             if run.hoverRefreshAt and time >= run.hoverRefreshAt then run.hoverRefreshAt = nil end
         end
         if s.released then s.mode = 'committing' end
@@ -236,18 +236,12 @@ function obj:_tick()
     if s.mode == 'committing' then
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.target)
         if not target then self:_cancel('target-disappeared'); return end
-        if hoverChanged(run, target, snapshot)
-            or (run.hoverRefreshAt and time >= run.hoverRefreshAt) then
-            run.target = target
-            if not self:_hover(target, time, snapshot) then return end
-            if run.hoverRefreshAt and time >= run.hoverRefreshAt then run.hoverRefreshAt = nil end
-        end
-        if run.hoverRefreshAt then return end
-        if time - run.hoveredAt < self.hoverDelay then return end
         run.focusTarget = target.id and hs.window.get(target.id)
         if not run.focusTarget then self:_cancel('target-unavailable'); return end
         hs.spaces.toggleMissionControl()
         run.closing, s.mode = time, 'closing'
+        -- Request focus during exit; reapply after exit because macOS may restore native hover focus.
+        run.focusTarget:focus()
     end
 end
 

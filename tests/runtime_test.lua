@@ -82,6 +82,20 @@ local function fixture()
     function f.ready() f.tick(0.5); f.tick(0.54) end
     return f
 end
+local immediate=fixture(); immediate.hoverReadyAt=10; immediate.stuck=true
+immediate.input(1,48,{cmd=true}); immediate.tick(0.03)
+immediate.input(3,55,{}); immediate.tick(0.06)
+check(immediate.toggles==1 and immediate.focused==2 and immediate.present,
+    'release requests exit and target focus on first snapshot before animation or hover readiness')
+immediate.tick(0.09)
+check(immediate.toggles==1, 'closing animation does not trigger repeated exit requests')
+immediate.present=false; immediate.focused=1; immediate.tick(0.12)
+check(immediate.focused==2 and immediate.spoon:status().state=='idle',
+    'exit reapplies target focus and releases input without diagnostic delay')
+check(immediate.input(1,48,{cmd=true}), 'next gesture is accepted immediately after exit')
+local settled=fixture(); settled.begin(); settled.ready(); settled.stuck=true
+settled.input(3,55,{}); settled.tick(0.55)
+check(settled.focused==2 and settled.toggles==1, 'settled release skips pending hover refresh and hover delay')
 local delayed=fixture(); delayed.hoverID=1; delayed.hoverReadyAt=0.7
 delayed.begin(); delayed.ready()
 check(delayed.pointer.x==225 and delayed.hoverID==1, 'early pointer placement can precede native hover readiness')
@@ -102,8 +116,8 @@ f=fixture(); f.input(1,48,{cmd=true}); f.input(3,55,{})
 f.tick(0.03)
 check(f.present, 'Command release before Tab release still opens overview')
 check(f.input(2,48,{}), 'late Tab release consumed')
-f=fixture(); f.begin(); f.input(3,55,{}); f.ready()
-check(f.spoon:status().state=='committing', 'release during opening waits for candidate readiness')
+f=fixture(); f.begin(); f.input(3,55,{}); f.tick(0.21)
+check(f.spoon:status().state=='closing' and f.focused==2, 'release during opening confirms at first candidate without waiting for layout')
 f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
 check(f.spoon:status().lastResult.matched and f.focused==2, 'early release commits exactly selected recent window')
 check(f.toggles==1 and f.pointer.x==225, 'one toggle and pointer centred on confirmed window')
