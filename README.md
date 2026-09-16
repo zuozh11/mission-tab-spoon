@@ -1,73 +1,103 @@
 # MissionTab
 
-**给 macOS 调度中心加上 `⌘Tab` 操作方式。**
+**给 macOS 原生调度中心加上 `⌘Tab` 窗口导航。**
 
-MissionTab 是一个 [Hammerspoon](https://www.hammerspoon.org/) Spoon：短按保留应用切换，长按进入系统原生调度中心，用键盘选择窗口，松开 Command 确认。
+短按切换应用，长按展开窗口；按 Tab 选择，松开 Command 确认。MissionTab 是一个 [Hammerspoon](https://www.hammerspoon.org/) Spoon，使用系统调度中心和原生悬停高亮。
 
-## 操作方式
+[下载安装包](https://github.com/zuozh11/mission-tab-spoon/releases/latest/download/MissionTab.spoon.zip) · [版本记录](CHANGELOG.md) · [反馈问题](https://github.com/zuozh11/mission-tab-spoon/issues)
+
+## 功能
+
+- **保留短按习惯**：短按 `⌘Tab` 使用原生应用切换。
+- **长按选择窗口**：松开 Tab、继续按住 Command，进入调度中心。
+- **当前屏幕导航**：只选择鼠标所在屏幕上、调度中心实际展示的窗口。
+- **最近窗口起步**：进入时优先选择最近使用的其他窗口，后续按空间顺序循环。
+- **原生选中反馈**：直接移动可见光标，用系统悬停框显示目标。
+- **键鼠接力**：移动鼠标接管选择，再按导航键恢复键盘模式。
+- **确认后光标居中**：检测到调度中心退出并聚焦目标后，立即将光标移到窗口中心。
+
+## 快速开始
+
+### 环境要求
+
+- macOS 和已安装的 Hammerspoon。
+- 在 **系统设置 → 隐私与安全性 → 辅助功能** 中允许 Hammerspoon。
+- 退出 AltTab 等同样占用 `⌘Tab` 的切换器，避免快捷键冲突。
+
+当前开发与使用环境为 **macOS 27.0、Hammerspoon 1.1.1**。其他系统版本和多显示器配置尚未完成全量验证。
+
+### 方式一：下载安装包
+
+1. 下载并解压 [MissionTab.spoon.zip](https://github.com/zuozh11/mission-tab-spoon/releases/latest/download/MissionTab.spoon.zip)。
+2. 将 `MissionTab.spoon` 文件夹放入 `~/.hammerspoon/Spoons/`。
+3. 在 `~/.hammerspoon/init.lua` 中添加以下内容；已有启动块时不要重复添加：
+
+   ```lua
+   hs.loadSpoon('MissionTab'):start()
+   ```
+
+4. 从 Hammerspoon 菜单选择 **Reload Config**。
+
+更新已有安装前，先停用 MissionTab 并备份旧的 Spoon 文件夹；替换文件后重新加载配置。
+
+### 方式二：从仓库安装
+
+需要 Git 和 Python 3：
+
+```sh
+git clone https://github.com/zuozh11/mission-tab-spoon.git
+cd mission-tab-spoon
+./scripts/install.sh
+```
+
+安装脚本会复制 Spoon、备份已有安装，并在缺少启动块时追加配置。备份保存在原文件或目录旁，名称包含 `.backup-时间戳`。安装结束后选择 **Reload Config**。
+
+以后更新：
+
+```sh
+git pull --ff-only
+./scripts/install.sh
+```
+
+再次选择 **Reload Config**。安装目录是文件副本，仓库更新不会自动影响已运行的版本。使用自定义 Hammerspoon 配置目录时，请采用手动安装。
+
+## 操作指南
+
+第一次使用：**按下 `⌘Tab` → 松开 Tab，继续按住 Command → 按 Tab 选择 → 松开 Command 确认。**
 
 | 操作 | 行为 |
 | --- | --- |
 | 短按 `⌘Tab` | 原生应用切换 |
-| 按 `⌘Tab`，松开 Tab，继续按住 Command | 进入调度中心，默认使用 Tab 模式并选中当前屏幕最近使用的其他窗口 |
-| Tab | 顺时针选择下一个窗口或应用组 |
-| 反引号 / Shift+Tab | 按相反方向选择 |
-| 松开 Command | 退出调度中心，激活选中窗口 |
+| 松开 Tab 后继续按住 Command | 进入调度中心，默认启用键盘选择 |
+| Tab | 顺时针选择下一项 |
+| 反引号或 Shift+Tab | 反向选择 |
+| 松开 Command | 激活目标窗口，光标移到窗口中心 |
 | Esc | 取消并返回原窗口 |
-| 移动鼠标 | 保留调度中心并改用鼠标选择；松开 Command 确认 |
-| 再按导航键 | 恢复键盘选择与系统悬停框 |
-| 调度中心已打开、没有活动切换会话时按 `⌘Tab` | 直接退出调度中心 |
+| 移动鼠标 | 保留调度中心，改用鼠标选择；松开 Command 仍会确认 |
+| 鼠标接管后再按导航键 | 从当前鼠标位置重新进入键盘选择 |
+| 没有活动切换会话，但调度中心已打开时按 `⌘Tab` | 直接退出调度中心 |
 
-### 应用组与导航顺序
+### 起点、屏幕与循环顺序
 
-堆叠的同应用窗口作为一个整体参与顺时针循环。Tab 在组内按屏幕位置**从上到下**访问，走完再进入下一组；反引号完整反向。没有堆叠的窗口独立参与循环。
+| 场景 | 起点 |
+| --- | --- |
+| 通过 `⌘Tab` 长按进入 | 鼠标所在屏幕上最近使用的其他窗口 |
+| 鼠标接管后再次按导航键 | 鼠标指向的调度中心窗口 |
+| 无法匹配起点 | 最靠近布局左上角的应用组或独立窗口 |
 
-通过 Command+Tab 长按进入时默认使用 Tab 模式，只纳入鼠标所在屏幕的窗口，优先选中最近使用的其他窗口；没有匹配时从左上方开始。鼠标接管后再次按导航键，起点使用鼠标指向的调度中心缩略图；没有命中时，从最靠近布局左上角的应用组开始顺时针循环。首次导航键选中起点，后续按键继续循环；组内仍从上到下。鼠标移到另一屏后再按导航键，会重新选择当前屏幕和起点。
+首次导航键选中起点，后续按键继续循环。鼠标移到另一块屏幕后再按导航键，会重新确定屏幕和起点。
 
-缩略图出现后就把光标移到目标的安全可见区域，直接使用系统原生悬停框；不隐藏光标、不绘制额外边框。动画中持续跟随目标，布局稳定后固定导航顺序。松开 Command 后退出调度中心，再按窗口 ID 确认焦点。
+堆叠的同应用窗口作为一组参与顺时针循环；组内按位置**从上到下**访问，走完再进入下一组。反向导航使用完整的逆序。没有堆叠的窗口独立参与循环。
 
-鼠标主动移动后交还鼠标选择；再按导航键按当前鼠标屏幕和目标重新开始。检测到调度中心退出并聚焦目标时立即将光标移到窗口中心，不等待焦点诊断；Esc 取消仍恢复键盘模式前的位置，鼠标主动接管后取消则保留用户位置。完全遮挡、没有安全悬停区域的目标会取消本次选择。
+### 光标行为
 
-## 环境要求
+MissionTab **会实际移动光标**，不隐藏光标，也不绘制额外边框。它选择缩略图的安全可见区域来触发系统悬停效果，并在打开动画中跟随目标。
 
-- macOS 与已安装的 Hammerspoon；当前开发和使用环境为 **macOS 27.0、Hammerspoon 1.1.1**。
-- 在系统设置中为 Hammerspoon 开启**辅助功能**权限。
-- 退出同样绑定 `⌘Tab` 的 AltTab 等切换器，避免争抢输入。
-- 自动安装脚本需要 Python 3；手动安装不需要。
-
-MissionTab 使用 Hammerspoon 自带模块，不依赖额外 Lua 包。其他 macOS 版本和多显示器环境尚未实机确认，详见 [兼容性与限制](#兼容性与限制)。
-
-## 安装
-
-### 从仓库安装
-
-取得仓库内容后，在项目目录执行：
-
-```sh
-./scripts/install.sh
-```
-
-脚本会：
-
-1. 将 `MissionTab.spoon` 复制到 `~/.hammerspoon/Spoons/`。
-2. 在已有安装和需要修改的配置旁创建 `.backup-时间戳` 备份。
-3. 在 `~/.hammerspoon/init.lua` 中添加带标记的启动块；已有标记时不重复添加。
-
-完成后，从 Hammerspoon 菜单选择 **Reload Config**。
-
-### 手动安装
-
-将本仓库中的 `MissionTab.spoon` 文件夹放入 `~/.hammerspoon/Spoons/`，再向 `~/.hammerspoon/init.lua` 添加：
-
-```lua
-hs.loadSpoon('MissionTab'):start()
-```
-
-然后选择 **Reload Config**。如果自行使用其他配置目录，请采用手动安装。
+确认时等待必要的悬停处理；退出并聚焦目标后立即将光标移到窗口中心。Esc 取消会恢复键盘模式前的位置；如果用户已主动接管鼠标，则保留用户位置。
 
 ## 配置
 
-需要调整手感时，用下面的内容替换原有启动块，不要重复添加多个启动块：
+用以下内容替换现有启动块：
 
 ```lua
 hs.loadSpoon('MissionTab')
@@ -76,53 +106,53 @@ spoon.MissionTab.hoverDelay = 0.25
 spoon.MissionTab:start()
 ```
 
-| 设置 | 默认值 | 说明 |
+| 设置 | 默认值 | 作用 |
 | --- | --- | --- |
-| `holdDelay` | `0.18` 秒 | 从第一次 Tab 按下开始计时；Tab 松开且 Command 仍按住后才进入调度中心 |
+| `holdDelay` | `0.18` 秒 | 从首次 Tab 按下开始计时；Tab 松开、Command 仍按住后进入调度中心 |
 | `hoverDelay` | `0.25` 秒 | 最后一次悬停定位到确认之间的最短等待 |
 | `openTimeout` | `1.5` 秒 | 等待调度中心暴露稳定窗口布局的期限 |
 | `closeTimeout` | `1.5` 秒 | 等待调度中心退出的期限 |
-| `reverseKeyCode` | 当前布局的反引号键 | 可指定 Hammerspoon 虚拟键码；无法解析布局时使用键码 `50` |
+| `reverseKeyCode` | 当前布局的反引号键 | 可指定 Hammerspoon 虚拟键码；布局无法解析时使用 `50` |
 
-配置文件修改后选择 **Reload Config**。若在控制台直接修改设置，可执行 `spoon.MissionTab:stop():start()`。
+修改配置文件后选择 **Reload Config**。若在控制台直接修改参数，执行 `spoon.MissionTab:stop():start()` 生效。
 
-## 停用、卸载与排查
+## 排查问题
 
-临时停用，在 Hammerspoon 控制台执行：
+| 现象 | 检查方式 |
+| --- | --- |
+| 快捷键不生效或切换异常 | 检查辅助功能权限、配置是否加载，以及其他切换器是否占用 `⌘Tab` |
+| 长按没有进入调度中心 | 确认已松开 Tab，并继续按住 Command；一直按着 Tab 不会进入长按分支 |
+| 输入密码时不生效 | Secure Input 开启时暂停接管，解除后自动恢复 |
+| 窗口没有参与循环 | 检查是否在鼠标所在屏幕、是否出现在当前调度中心，以及是否已最小化 |
+| 切换取消或插件暂停 | 查看状态与日志；解决结构不兼容或超时问题后执行 `start()` 重试 |
 
-```lua
-spoon.MissionTab:stop()
-```
-
-重新启用：
-
-```lua
-spoon.MissionTab:start()
-```
-
-永久卸载：先停用，删除 `init.lua` 中的启动块，再删除 `~/.hammerspoon/Spoons/MissionTab.spoon`，最后 Reload Config。自动安装生成的启动块位于 `-- MissionTab BEGIN` 和 `-- MissionTab END` 之间。
-
-### 查看状态
-
-在控制台执行：
+在 Hammerspoon 控制台查看版本和状态：
 
 ```lua
+spoon.MissionTab.version
 hs.inspect(spoon.MissionTab:status())
 ```
 
-返回运行状态、暂停原因及最近一次切换结果。键盘确认会记录目标窗口 ID 和实际焦点窗口 ID。
+状态包含暂停原因和最近一次结果；键盘确认会记录目标窗口 ID 与实际焦点窗口 ID。提问时请附系统版本、Hammerspoon 版本和复现步骤，详见 [贡献与开发说明](CONTRIBUTING.md)。
 
-若调度中心结构不兼容或关闭超时，插件会暂停接管。解决问题后调用 `start()` 重试。Secure Input 开启时暂停，解除后自动恢复。
+## 停用、回退与卸载
 
-更多诊断方法和问题反馈所需信息见 [贡献与开发说明](CONTRIBUTING.md)。
+```lua
+spoon.MissionTab:stop()   -- 临时停用
+spoon.MissionTab:start()  -- 重新启用
+```
+
+- **回退**：先停用，将已备份的 Spoon 文件夹恢复到安装位置，再 Reload Config。
+- **卸载**：先停用，删除配置中的启动块和 `~/.hammerspoon/Spoons/MissionTab.spoon`，再 Reload Config。自动安装的启动块位于 `-- MissionTab BEGIN` 与 `-- MissionTab END` 之间。
 
 ## 兼容性与限制
 
-- 只选择本次调度中心中展示的窗口，不遍历其他桌面，也不恢复最小化窗口。
-- 使用系统内部的辅助功能结构和 `hs.spaces`，macOS 更新可能需要重新适配。
-- 当前主要适配 macOS 27 的 WindowManager 结构；保留 Dock 旧结构的读取路径，但不宣称旧系统已实机通过。
-- 窗口组通过应用/桌面标识及缩略图重叠关系识别。完全遮挡且没有安全悬停区域时取消选择。
-- 早期版本进行过自动化和实机验证，后续交互迭代由用户试用验证；这些结果不代表当前版本已完成全量回归。具体范围见 [验证记录](docs/verification.md)。
+- 只选择当前调度中心展示的窗口，不遍历其他桌面，也不恢复最小化窗口。
+- 完全遮挡、没有安全悬停区域的目标会取消本次选择。
+- 依赖系统内部辅助功能结构和 `hs.spaces`，macOS 更新可能需要重新适配。
+- 当前主要适配 macOS 27 的 WindowManager 结构；保留旧 Dock 结构的读取路径，不代表旧系统已验证。
+- 多显示器与其他系统版本尚未完成全量验证。
+- 早期版本做过自动化与实机验证，后续交互迭代由用户试用；历史结果不代表当前版本通过全量回归，详见 [验证记录](docs/verification.md)。
 
 ## 项目文档
 
