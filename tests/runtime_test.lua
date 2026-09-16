@@ -82,6 +82,9 @@ local function fixture(holdDelay)
         if f.present and not f.empty then
             for id=1,3 do if id~=f.removed then
                 out.candidates[#out.candidates+1]={id=id,element=id,frame={x=id*100+(f.motion and f.time*100 or 0),y=0,w=50,h=50},display={x=0,y=0}}
+                if f.occluded and id==1 then
+                    out.candidates[#out.candidates].frame={x=200,y=0,w=50,h=50}
+                end
             end end
         end
         return out
@@ -113,6 +116,30 @@ local function fixture(holdDelay)
     return f
 end
 local native=fixture(0.18)
+for _, duringEntry in ipairs({true, false}) do
+    local overlap=fixture()
+    if duringEntry then overlap.occluded=true end
+    overlap.begin(); overlap.ready()
+    overlap.occluded=true
+    local pointer=overlap.pointer
+    local posted=#overlap.posted
+    overlap.tick(0.6); overlap.tick(2)
+    check(overlap.present and overlap.toggles==0 and overlap.spoon.session.mode=='navigating',
+        'overlapping thumbnails must not close overview or block entry stabilization')
+    check(overlap.pointer==pointer and #overlap.posted==posted,
+        'occluded selection never moves pointer to an unsafe thumbnail')
+    overlap.input(3,55,{}); overlap.tick(2.03); overlap.tick(2.06)
+    check(overlap.focused==2 and overlap.spoon:status().lastResult.matched,
+        'occluded target still confirms by window ID on Command release')
+end
+local temporaryOverlap=fixture(); temporaryOverlap.occluded=true
+temporaryOverlap.begin(); temporaryOverlap.ready()
+temporaryOverlap.occluded=false; temporaryOverlap.tick(0.6)
+check(temporaryOverlap.pointer.x==225 and temporaryOverlap.toggles==0,
+    'native hover resumes once thumbnail has a safe visible area')
+temporaryOverlap.input(1,48,{cmd=true}); temporaryOverlap.input(2,48,{cmd=true}); temporaryOverlap.tick(0.63)
+check(temporaryOverlap.spoon.run.target.id==3 and temporaryOverlap.toggles==0,
+    'navigation continues after temporary thumbnail overlap')
 native.input(1,48,{cmd=true}); native.input(2,48,{cmd=true}); native.tick(0.08)
 native.input(3,55,{})
 check(#native.posted==4 and not native.present and native.spoon:status().state=='idle',

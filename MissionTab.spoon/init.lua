@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.19', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.20', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -133,12 +133,13 @@ function obj:_cancel(reason)
 end
 
 function obj:_hover(point, time)
-    if not point then self:_cancel('target-occluded'); return false end
+    -- Overlap can hide every safe hover point, especially during layout changes.
+    -- Keep keyboard selection: confirmation uses the window ID, not the pointer.
+    if not point then return end
     self.run.pointerMoved, self.run.lastPointer = true, point
     hs.mouse.absolutePosition(point)
     tagged(event.newMouseEvent(types.mouseMoved, point):setFlags({})):post()
     self.run.hoveredAt = time
-    return true
 end
 
 function obj:_replay(remainingFlags)
@@ -267,7 +268,7 @@ function obj:_tick()
             if not run.target or run.target.id ~= target.id
                 or hoverChanged(run, point) then
                 run.index, run.target = index, target
-                if not s.released and not self:_hover(point, time) then return end
+                if not s.released then self:_hover(point, time) end
             end
         end
         if s.released and (base or (run.mouseSelection and snapshot.present)) then
@@ -356,7 +357,7 @@ function obj:_tick()
         if run.index ~= index or hoverChanged(run, point)
             or (run.hoverRefreshAt and time >= run.hoverRefreshAt) then
             run.index, run.target = index, target
-            if not s.released and not self:_hover(point, time) then return end
+            if not s.released then self:_hover(point, time) end
             if run.hoverRefreshAt and time >= run.hoverRefreshAt then run.hoverRefreshAt = nil end
         end
         if s.released then s.mode = 'committing' end
