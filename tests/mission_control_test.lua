@@ -55,9 +55,28 @@ for i,xy in ipairs({{0,-100},{100,0},{0,100},{-100,0}}) do
 end
 local sorted,start=mc.order({ring[3],ring[1],ring[4],ring[2]})
 for i=1,4 do check(sorted[i].id==i, 'clockwise order is top/right/bottom/left') end
-check(sorted[start].id==1, 'circular order starts at the upper-left nearest group')
+check(sorted[start].id==1, 'circular order starts at the upper-left nearest thumbnail')
 check(sorted[(start % #sorted)+1].id==2, 'Tab advances clockwise')
 check(sorted[((start-2) % #sorted)+1].id==4, 'reverse wraps counterclockwise from first item')
+local stacked={}
+local sharedDisplay={}
+for i,xy in ipairs({{0,-100},{100,0},{0,100},{-100,20},{-100,-20}}) do
+    stacked[i]={id=i,groupKey='same.app.space.4',display=sharedDisplay,
+        frame={x=xy[1]-30,y=xy[2]-30,w=60,h=60}}
+end
+local clockwise=mc.order({stacked[5],stacked[3],stacked[1],stacked[4],stacked[2]})
+local positions={}
+for i,candidate in ipairs(clockwise) do positions[candidate.id]=i end
+for id=1,5 do
+    check(clockwise[(positions[id] % 5)+1].id==(id % 5)+1,
+        'all thumbnails follow clockwise geometry, including bottom-to-top on the left stack')
+    check(clockwise[((positions[id]-2) % 5)+1].id==((id-2) % 5)+1,
+        'counterclockwise navigation exactly reverses the full ring')
+end
+local coincidentA={id=10,frame={x=0,y=0,w=40,h=40}}
+local coincidentB={id=20,frame={x=0,y=0,w=40,h=40}}
+local tied=mc.order({coincidentB,coincidentA})
+check(tied[1].id==10 and tied[2].id==20, 'coincident thumbnails use stable window ID order')
 local single,index=mc.order({ring[1]})
 check(index==1 and single[index].id==1, 'one-window layout remains selectable')
 local empty,index=mc.order({})
