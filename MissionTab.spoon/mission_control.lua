@@ -16,8 +16,10 @@ function MC.snapshot()
         local frame = element:attributeValue('AXFrame')
         if not frame or frame.w <= 0 or frame.h <= 0 or element.AXEnabled == false then return end
         local wid = element:attributeValue('wid')
+        local identifier = element:attributeValue('AXIdentifier')
         result.candidates[#result.candidates + 1] = {
             element = element, id = wid, frame = frame, display = display,
+            groupKey = identifier and identifier:match("^.+%.space%.%d+$"),
         }
     end
     local root, pid = applicationRoot('com.apple.WindowManager')
@@ -50,41 +52,80 @@ function MC.snapshot()
     return result
 end
 
--- Clockwise around the centre of the thumbnail layout; recency chooses only the start.
+-- Overlapping windows with the same app/Space identity form one clockwise stop.
+-- Flatten each stop top-to-bottom so reverse navigation is the exact inverse.
 function MC.order(candidates, windowIDs, originalID)
     if #candidates == 0 then return candidates, nil end
+    local groups, assigned = {}, {}
+    local function overlaps(a, b)
+        return a.x < b.x + b.w and b.x < a.x + a.w
+            and a.y < b.y + b.h and b.y < a.y + a.h
+    end
+    for i, candidate in ipairs(candidates) do
+        if not assigned[i] then
+            local group = { members = { { candidate = candidate, ordinal = i } }, ordinal = i }
+            assigned[i] = true
+            local cursor = 1
+            while cursor <= #group.members do
+                local member = group.members[cursor].candidate
+                if member.groupKey then
+                    for j, other in ipairs(candidates) do
+                        if not assigned[j] and other.groupKey == member.groupKey
+                            and other.display == member.display and overlaps(member.frame, other.frame) then
+                            assigned[j] = true
+                            group.members[#group.members + 1] = { candidate = other, ordinal = j }
+                        end
+                    end
+                end
+                cursor = cursor + 1
+            end
+            groups[#groups + 1] = group
+        end
+    end
     local left, top, right, bottom = math.huge, math.huge, -math.huge, -math.huge
-    for _, candidate in ipairs(candidates) do
-        local f = candidate.frame
-        left, top = math.min(left, f.x), math.min(top, f.y)
-        right, bottom = math.max(right, f.x + f.w), math.max(bottom, f.y + f.h)
+    for _, group in ipairs(groups) do
+        local gl, gt, gr, gb = math.huge, math.huge, -math.huge, -math.huge
+        for _, member in ipairs(group.members) do
+            local f = member.candidate.frame
+            gl, gt = math.min(gl, f.x), math.min(gt, f.y)
+            gr, gb = math.max(gr, f.x + f.w), math.max(gb, f.y + f.h)
+        end
+        group.x, group.y = (gl + gr) / 2, (gt + gb) / 2
+        left, top, right, bottom = math.min(left, gl), math.min(top, gt), math.max(right, gr), math.max(bottom, gb)
+        table.sort(group.members, function(a, b)
+            local ac, bc = a.candidate, b.candidate
+            if ac.frame.y ~= bc.frame.y then return ac.frame.y < bc.frame.y end
+            if ac.frame.x ~= bc.frame.x then return ac.frame.x < bc.frame.x end
+            if ac.id and bc.id and ac.id ~= bc.id then return ac.id < bc.id end
+            return a.ordinal < b.ordinal
+        end)
     end
     local cx, cy = (left + right) / 2, (top + bottom) / 2
-    local positions = {}
-    for i, candidate in ipairs(candidates) do
-        local f = candidate.frame
-        local dx, dy = f.x + f.w / 2 - cx, f.y + f.h / 2 - cy
-        positions[candidate] = { angle = (dx == 0 and dy == 0) and 0 or math.atan(dx, -dy) % (2 * math.pi),
-            radius = dx * dx + dy * dy, ordinal = i }
+    for _, group in ipairs(groups) do
+        local dx, dy = group.x - cx, group.y - cy
+        group.angle = (dx == 0 and dy == 0) and 0 or math.atan(dx, -dy) % (2 * math.pi)
+        group.radius = dx * dx + dy * dy
     end
-    table.sort(candidates, function(a, b)
-        local ap, bp = positions[a], positions[b]
-        if ap.angle ~= bp.angle then return ap.angle < bp.angle end
-        if ap.radius ~= bp.radius then return ap.radius < bp.radius end
-        if a.id and b.id and a.id ~= b.id then return a.id < b.id end
-        return ap.ordinal < bp.ordinal
+    table.sort(groups, function(a, b)
+        if a.angle ~= b.angle then return a.angle < b.angle end
+        if a.radius ~= b.radius then return a.radius < b.radius end
+        return a.ordinal < b.ordinal
     end)
+    local ordered = {}
+    for _, group in ipairs(groups) do
+        for _, member in ipairs(group.members) do ordered[#ordered + 1] = member.candidate end
+    end
     for _, id in ipairs(windowIDs) do
         if id ~= originalID then
-            for i, candidate in ipairs(candidates) do
-                if candidate.id == id then return candidates, i end
+            for i, candidate in ipairs(ordered) do
+                if candidate.id == id then return ordered, i end
             end
         end
     end
-    for i, candidate in ipairs(candidates) do
-        if originalID and candidate.id == originalID then return candidates, i end
+    for i, candidate in ipairs(ordered) do
+        if originalID and candidate.id == originalID then return ordered, i end
     end
-    return candidates, 1
+    return ordered, 1
 end
 
 function MC.find(snapshot, target)
