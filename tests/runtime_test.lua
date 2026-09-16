@@ -39,7 +39,12 @@ local function fixture(holdDelay)
             f.toggles=f.toggles+1
             if not f.stuck then f.present=not f.present; f.focused=f.hoverID or f.focused end
         end},
-        screen={watcher={new=watcher}},caffeinate={watcher={new=watcher,systemWillSleep=1,screensDidLock=2}},
+        screen={watcher={new=watcher},allScreens=function()
+            if f.screens then return f.screens end
+            return {{id=function() return 1 end,fullFrame=function()
+                return f.screenFrame or {x=0,y=0,w=1000,h=1000}
+            end}}
+        end},caffeinate={watcher={new=watcher,systemWillSleep=1,screensDidLock=2}},
         eventtap={new=function(_,fn) return watcher(fn) end,isSecureInputEnabled=function() return f.secure end,checkKeyboardModifiers=function() return f.modifiers or {} end},
     }
     hs.eventtap.event={types={keyDown=1,keyUp=2,flagsChanged=3,mouseMoved=4,leftMouseDown=5,rightMouseDown=6},
@@ -164,6 +169,24 @@ local openingMouse=fixture(); openingMouse.motion=true; openingMouse.begin()
 openingMouse.move({x=245,y=25}); openingMouse.tick(0.3)
 check(openingMouse.spoon:status().state=='opening' and openingMouse.canvas.bounds.x==232,
     'mouse highlight works while entry geometry is still moving')
+local startup=fixture(); startup.begin()
+for _=1,5 do startup.spoon.screenWatcher.callback() end
+check(startup.spoon:status().state=='opening', 'unchanged screen geometry notifications do not cancel first entry')
+startup.ready()
+check(startup.spoon.highlight and startup.toggles==0, 'first entry keeps highlight and overview open after notification burst')
+startup.screenFrame={x=100,y=0,w=1000,h=1000}
+startup.spoon.screenWatcher.callback(); startup.tick(0.6)
+check(startup.toggles==1 and startup.spoon:status().state=='closing', 'real screen rearrangement still cancels safely')
+startup.spoon.screenWatcher.callback(); startup.tick(0.7)
+check(startup.toggles==1 and startup.spoon:status().state=='idle', 'unchanged follow-up notification does not restart cancellation')
+local topology=fixture()
+local screenA={id=function() return 1 end,fullFrame=function() return {x=0,y=0,w=1000,h=1000} end}
+local screenB={id=function() return 2 end,fullFrame=function() return {x=1000,y=0,w=1000,h=1000} end}
+topology.screens={screenA,screenB}; topology.spoon.screenWatcher.callback(); topology.begin()
+topology.screens={screenB,screenA}; topology.spoon.screenWatcher.callback()
+check(topology.spoon:status().state=='opening', 'screen enumeration order alone does not cancel')
+topology.screens={screenA}; topology.spoon.screenWatcher.callback()
+check(topology.spoon:status().state=='cancelling', 'disconnecting a display still cancels active navigation')
 local immediate=fixture(); immediate.hoverReadyAt=10; immediate.stuck=true
 immediate.input(1,48,{cmd=true}); immediate.tick(0.03)
 immediate.input(3,55,{}); immediate.tick(0.06)

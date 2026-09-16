@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.16', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.17', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -13,6 +13,18 @@ local function hoverChanged(run, target, snapshot)
     local point = MC.point(snapshot, target)
     return not point or not run.lastPointer
         or math.abs(point.x - run.lastPointer.x) + math.abs(point.y - run.lastPointer.y) > 2
+end
+
+-- Dock visibility can notify screen watchers without changing thumbnail coordinates.
+local function screenLayout()
+    local screens = {}
+    for _, screen in ipairs(hs.screen.allScreens()) do
+        local frame = screen:fullFrame()
+        screens[#screens + 1] = string.format('%s:%g,%g,%g,%g',
+            screen:id(), frame.x, frame.y, frame.w, frame.h)
+    end
+    table.sort(screens)
+    return table.concat(screens, ';')
 end
 
 local function restorePointer(run)
@@ -454,7 +466,11 @@ function obj:start()
         local ok, snapshot = pcall(MC.snapshot)
         if ok then self.overviewOpen = snapshot.present end
     end)
+    self.screenLayout = screenLayout()
     self.screenWatcher = hs.screen.watcher.new(function()
+        local layout = screenLayout()
+        if layout == self.screenLayout then return end
+        self.screenLayout = layout
         if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
     end):start()
     self.sleepWatcher = hs.caffeinate.watcher.new(function(kind)
