@@ -51,7 +51,7 @@ cd mission-tab-spoon
 ./scripts/install.sh
 ```
 
-安装脚本会复制 Spoon、备份已有安装，并在缺少启动块时追加配置。备份保存在原文件或目录旁，名称包含 `.backup-时间戳`。安装结束后选择 **Reload Config**。
+安装脚本会复制 Spoon、备份已有安装，并在配置中没有 MissionTab 引用时追加启动块。已有手动配置或注释引用时保留原文件，并提示检查启动配置。备份保存在原文件或目录旁，名称包含 `.backup-时间戳`。安装结束后选择 **Reload Config**。
 
 以后更新：
 
