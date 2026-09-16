@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.15', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.16', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -172,6 +172,16 @@ function obj:_tick()
     if s.mode == 'cancelling' then self:_cancel('cancelled'); return end
     local snapshot = MC.snapshot()
     if snapshot.present and run.ownsMC then run.sawMC = true end
+    if run.mouseSelection then
+        local target
+        local screen = hs.mouse.getCurrentScreen()
+        if snapshot.present and not s.released and screen then
+            local scoped = MC.onScreen(snapshot, screen:id(), screen:fullFrame())
+            local index, hit = MC.pointerIndex(snapshot, scoped.candidates, hs.mouse.absolutePosition())
+            if hit then target = scoped.candidates[index] end
+        end
+        self:_highlight(target)
+    end
     if s.mode == 'dismissing' then
         if not snapshot.present then self:_finish('already-closed'); return end
         run.openedAt, run.ownsMC, run.sawMC = time, true, true
@@ -342,7 +352,6 @@ function obj:_event(e)
                 or math.abs(point.x - run.lastPointer.x) + math.abs(point.y - run.lastPointer.y) > 3)
             and (mode == 'opening' or mode == 'navigating' or mode == 'committing') then
             run.mouseSelection, run.userPointer = true, true
-            self:_highlight()
         end
         return false
     end

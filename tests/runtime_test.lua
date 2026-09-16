@@ -132,8 +132,8 @@ check(not canvas.activates and not canvas.callback and not canvas.mouseEvents[1]
     'highlight does not activate Hammerspoon or capture native pointer input')
 mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.3)
 check(mask.canvas==canvas and canvas.bounds.x==332, 'one canvas follows selection and moving entry geometry')
-mask.move({x=800,y=800})
-check(canvas.deleted and not mask.spoon.highlight, 'mouse takeover removes keyboard highlight')
+mask.move({x=800,y=800}); mask.tick(0.32)
+check(canvas.deleted and not mask.spoon.highlight, 'moving into blank space removes the highlight')
 mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.4)
 check(mask.spoon.highlight and mask.spoon.highlight.visible, 'keyboard resumption restores the highlight')
 mask.input(3,55,{})
@@ -144,6 +144,26 @@ check(stoppedCanvas.deleted, 'stopping deletes the highlight')
 local cancelMask=fixture(); cancelMask.begin(); local cancelCanvas=cancelMask.canvas
 cancelMask.input(1,53,{cmd=true}); cancelMask.tick(0.3)
 check(cancelCanvas.deleted, 'Escape cleanup removes the highlight')
+local mouseMask=fixture(); mouseMask.begin(); mouseMask.ready()
+local postedBeforeMouse=#mouseMask.posted
+mouseMask.move({x=325,y=25}); mouseMask.tick(0.6)
+check(mouseMask.spoon.highlight and mouseMask.canvas.bounds.x==302,
+    'mouse takeover highlights the hovered thumbnail')
+check(mouseMask.pointer.x==325 and #mouseMask.posted==postedBeforeMouse,
+    'mouse highlight does not warp pointer or synthesize hover events')
+mouseMask.move({x=125,y=25}); mouseMask.tick(0.63)
+check(mouseMask.canvas.bounds.x==102, 'mouse highlight follows a different thumbnail')
+mouseMask.move({x=800,y=800}); mouseMask.tick(0.66)
+check(not mouseMask.spoon.highlight, 'blank space hides highlight instead of selecting nearest thumbnail')
+mouseMask.move({x=225,y=25}); mouseMask.tick(0.69)
+check(mouseMask.spoon.highlight, 'hovering a thumbnail again restores highlight')
+mouseMask.input(3,55,{}); mouseMask.tick(0.72)
+check(not mouseMask.spoon.highlight and mouseMask.toggles==1,
+    'mouse confirmation hides highlight while preserving native exit')
+local openingMouse=fixture(); openingMouse.motion=true; openingMouse.begin()
+openingMouse.move({x=245,y=25}); openingMouse.tick(0.3)
+check(openingMouse.spoon:status().state=='opening' and openingMouse.canvas.bounds.x==232,
+    'mouse highlight works while entry geometry is still moving')
 local immediate=fixture(); immediate.hoverReadyAt=10; immediate.stuck=true
 immediate.input(1,48,{cmd=true}); immediate.tick(0.03)
 immediate.input(3,55,{}); immediate.tick(0.06)
