@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.1.2', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.1.3', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -134,9 +134,25 @@ function obj:_tick()
             self:_cancel('open-timeout')
             return
         end
-        -- A stable AX frame can precede the visible animation finishing. Require a short floor.
-        if time - run.openedAt >= 0.25 and MC.stable(run.previous, snapshot) then
-            run.candidates, run.base = MC.order(snapshot.candidates, run.order, run.originalID)
+        -- Preview as soon as AX exposes a usable frame; keep following it during animation.
+        -- Stabilization only freezes the clockwise order and permits confirmation.
+        local candidates, base = MC.order(snapshot.candidates, run.order, run.originalID)
+        if run.mouseSelection and #s.directions ~= run.mouseKeyCount then
+            run.mouseSelection, run.index = false, nil
+        end
+        if base and not run.mouseSelection then
+            local offset = s.steps - s.directions[1]
+            local index = ((base - 1 + offset) % #candidates) + 1
+            local target = candidates[index]
+            local point = MC.point(snapshot, target)
+            if point and (not run.target or run.target.element ~= target.element
+                or not run.lastPointer or distance(run.lastPointer, point) > 2) then
+                run.index, run.target = index, target
+                if not self:_hover(target, time, snapshot) then return end
+            end
+        end
+        if MC.stable(run.previous, snapshot) then
+            run.candidates, run.base = candidates, base
             run.backend, run.pid = snapshot.backend, snapshot.pid
             s.mode = 'navigating'
         else
