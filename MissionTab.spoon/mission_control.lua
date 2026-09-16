@@ -12,13 +12,13 @@ end
 
 function MC.snapshot()
     local result = { present = false, candidates = {} }
-    local function add(element, display)
+    local function add(element, display, displayID)
         local frame = element:attributeValue('AXFrame')
         if not frame or frame.w <= 0 or frame.h <= 0 or element.AXEnabled == false then return end
         local wid = element:attributeValue('wid')
         local identifier = element:attributeValue('AXIdentifier')
         result.candidates[#result.candidates + 1] = {
-            element = element, id = wid, frame = frame, display = display,
+            element = element, id = wid, frame = frame, display = display, displayID = displayID,
             groupKey = identifier and identifier:match("^.+%.space%.%d+$"),
         }
     end
@@ -28,7 +28,7 @@ function MC.snapshot()
             result.present, result.backend, result.pid = true, 'WindowManager', pid
             local displayFrame = display.AXFrame or { x = 0, y = 0 }
             for _, element in ipairs(children(display)) do
-                if element.AXRole == 'AXButton' then add(element, displayFrame) end
+                if element.AXRole == 'AXButton' then add(element, displayFrame, display:attributeValue('AXDisplayID')) end
             end
         end
     end
@@ -42,7 +42,7 @@ function MC.snapshot()
                     local displayFrame = display.AXFrame or { x = 0, y = 0 }
                     for _, windows in ipairs(children(display)) do
                         if windows.AXIdentifier == 'mc.windows' then
-                            for _, element in ipairs(children(windows)) do add(element, displayFrame) end
+                            for _, element in ipairs(children(windows)) do add(element, displayFrame, display:attributeValue('AXDisplayID')) end
                         end
                     end
                 end
@@ -54,7 +54,7 @@ end
 
 -- Overlapping windows with the same app/Space identity form one clockwise stop.
 -- Flatten each stop top-to-bottom so reverse navigation is the exact inverse.
-function MC.order(candidates, windowIDs, originalID)
+function MC.order(candidates)
     if #candidates == 0 then return candidates, nil end
     local groups, assigned = {}, {}
     local function overlaps(a, b)
@@ -111,21 +111,68 @@ function MC.order(candidates, windowIDs, originalID)
         if a.radius ~= b.radius then return a.radius < b.radius end
         return a.ordinal < b.ordinal
     end)
+    -- Start the circular group order at the group nearest the upper-left corner.
+    local first, nearest = 1, math.huge
+    for i, group in ipairs(groups) do
+        local distance = (group.x - left)^2 + (group.y - top)^2
+        if distance < nearest then first, nearest = i, distance end
+    end
     local ordered = {}
-    for _, group in ipairs(groups) do
+    for offset = 0, #groups - 1 do
+        local group = groups[((first - 1 + offset) % #groups) + 1]
         for _, member in ipairs(group.members) do ordered[#ordered + 1] = member.candidate end
     end
-    for _, id in ipairs(windowIDs) do
-        if id ~= originalID then
+    return ordered, 1
+end
+
+local function contains(frame, point)
+    return point.x >= frame.x and point.x < frame.x + frame.w
+        and point.y >= frame.y and point.y < frame.y + frame.h
+end
+
+function MC.onScreen(snapshot, screenID, screenFrame)
+    local scoped = { present = snapshot.present, backend = snapshot.backend,
+        pid = snapshot.pid, candidates = {} }
+    for _, candidate in ipairs(snapshot.candidates) do
+        local frame = candidate.display
+        local sameScreen
+        if candidate.displayID then
+            sameScreen = candidate.displayID == screenID
+        elseif frame and frame.w and frame.h then
+            sameScreen = contains(screenFrame, { x = frame.x + frame.w / 2, y = frame.y + frame.h / 2 })
+        else
+            frame = candidate.frame
+            sameScreen = contains(screenFrame, { x = frame.x + frame.w / 2, y = frame.y + frame.h / 2 })
+        end
+        if sameScreen then scoped.candidates[#scoped.candidates + 1] = candidate end
+    end
+    return scoped
+end
+
+function MC.pointerIndex(snapshot, ordered, point)
+    -- Ask the overview's AX tree to resolve stacking, rather than guessing by rectangles.
+    local ok, hit = pcall(function()
+        return hs.axuielement.applicationElementForPID(snapshot.pid):elementAtPosition(point)
+    end)
+    if ok then
+        for _ = 1, 8 do
+            if not hit then break end
+            local id = hit:attributeValue('wid')
             for i, candidate in ipairs(ordered) do
-                if candidate.id == id then return ordered, i end
+                if (id and candidate.id == id) or candidate.element == hit then return i end
             end
+            hit = hit:attributeValue('AXParent')
         end
     end
+    -- A unique rectangle is unambiguous; overlapping rectangles need an AX hit.
+    local found
     for i, candidate in ipairs(ordered) do
-        if originalID and candidate.id == originalID then return ordered, i end
+        if contains(candidate.frame, point) then
+            if found then return 1 end
+            found = i
+        end
     end
-    return ordered, 1
+    return found or 1
 end
 
 function MC.find(snapshot, target)

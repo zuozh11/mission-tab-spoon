@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.1', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.2', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -118,10 +118,11 @@ function obj:_tick()
     if s.mode == 'replay' then self:_replay(); return end
     if not self.run then
         local original = hs.window.focusedWindow()
-        local ordered = {}
-        for _, window in ipairs(hs.window.orderedWindows()) do ordered[#ordered + 1] = window:id() end
-        self.run = { original = original, originalID = original and original:id(), order = ordered,
-            serial = s.serial }
+        local screen = hs.mouse.getCurrentScreen()
+        if not screen then self:_finish('pointer-screen-unavailable'); return end
+        self.run = { original = original, serial = s.serial,
+            screenID = screen:id(), screenFrame = screen:fullFrame(),
+            pointer = hs.mouse.absolutePosition(), stepOrigin = s.directions[1] }
         self.lastResult = nil
     end
     local run = self.run
@@ -151,12 +152,11 @@ function obj:_tick()
         end
         -- Preview as soon as AX exposes a usable frame; keep following it during animation.
         -- Stabilization only freezes the clockwise order and permits confirmation.
-        local candidates, base = MC.order(snapshot.candidates, run.order, run.originalID)
-        if run.mouseSelection and #s.directions ~= run.mouseKeyCount then
-            run.mouseSelection, run.index, run.target = false, nil, nil
-        end
+        local scoped = MC.onScreen(snapshot, run.screenID, run.screenFrame)
+        local candidates, base = MC.order(scoped.candidates)
+        if base then base = MC.pointerIndex(scoped, candidates, run.pointer) end
         if base and not run.mouseSelection then
-            local offset = s.steps - s.directions[1]
+            local offset = s.steps - run.stepOrigin
             local index = ((base - 1 + offset) % #candidates) + 1
             local target = candidates[index]
             if not run.target or run.target.id ~= target.id
@@ -165,12 +165,12 @@ function obj:_tick()
                 if not self:_preview(target, time) then return end
             end
         end
-        if MC.stable(run.previous, snapshot) then
+        if MC.stable(run.previous, scoped) then
             run.candidates, run.base = candidates, base
             run.backend, run.pid = snapshot.backend, snapshot.pid
             s.mode = 'navigating'
         else
-            run.previous = snapshot
+            run.previous = scoped
             return
         end
     end
@@ -209,23 +209,18 @@ function obj:_tick()
         self:_cancel('overview-replaced'); return
     end
     if run.mouseSelection then
-        if #s.directions ~= run.mouseKeyCount then
-            run.mouseSelection, run.index = false, nil
-            s.mode = 'navigating'
-        else
-            if s.released then
-                run.target = nil -- Let Mission Control confirm the user's mouse selection.
-                hs.spaces.toggleMissionControl()
-                run.closing, s.mode = time, 'closing'
-            end
-            return
+        if s.released then
+            run.target = nil -- The system confirms the user's mouse selection.
+            hs.spaces.toggleMissionControl()
+            run.closing, s.mode = time, 'closing'
         end
+        return
     end
     if s.mode == 'navigating' then
-        -- The first Tab opens at the recent window. Only later keys move around the layout.
-        local offset = s.steps - s.directions[1]
+        -- The first navigation key selects the pointer target; later keys walk the frozen order.
+        local offset = s.steps - run.stepOrigin
         local index = ((run.base - 1 + offset) % #run.candidates) + 1
-        local target = MC.find(snapshot, run.candidates[index])
+        local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.candidates[index])
         if not target then self:_cancel('target-disappeared'); return end
         if run.index ~= index or frameChanged(run.previewFrame, target.frame) then
             run.index, run.target = index, target
@@ -234,7 +229,7 @@ function obj:_tick()
         if s.released then s.mode = 'committing' end
     end
     if s.mode == 'committing' then
-        local target = MC.find(snapshot, run.target)
+        local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.target)
         if not target then self:_cancel('target-disappeared'); return end
         if frameChanged(run.previewFrame, target.frame) then
             run.target = target
@@ -272,7 +267,6 @@ function obj:_event(e)
         if run and run.ownsMC and motion > 0
             and (mode == 'opening' or mode == 'navigating' or mode == 'committing') then
             run.mouseSelection = true
-            run.mouseKeyCount = #self.session.directions
             self:_hidePreview()
         end
         return false
@@ -290,10 +284,24 @@ function obj:_event(e)
         end
         return false
     end
+    local previousKeyCount = #(self.session.directions or {})
     local previousSerial = self.session.serial
     local wasIdle = self.session.mode == 'idle'
     local consumed = self.session:handle(inputKind, key, e:getFlags(),
         e:getProperty(properties.keyboardEventAutorepeat) == 1, now())
+    if self.run and self.run.mouseSelection
+        and #(self.session.directions or {}) ~= previousKeyCount then
+        local screen = hs.mouse.getCurrentScreen()
+        if not screen then self.session.mode = 'cancelling'
+        else
+            local run = self.run
+            run.screenID, run.screenFrame = screen:id(), screen:fullFrame()
+            run.pointer, run.stepOrigin = hs.mouse.absolutePosition(), self.session.steps
+            run.mouseSelection, run.index, run.target, run.previous = false, nil, nil, nil
+            run.openedAt = now()
+            self.session.mode = 'opening'
+        end
+    end
     if self.session.serial ~= previousSerial then
         self.lastResult = nil
         if wasIdle and self.overviewOpen then self.session.mode = 'dismissing' end
