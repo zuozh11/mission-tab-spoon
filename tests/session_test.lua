@@ -46,7 +46,11 @@ check(not s:handle('down', 'q', { cmd = true }, false, 0.1), 'other pending chor
 check(s.mode == 'cancelling', 'other pending chord cancels')
 s = begin()
 s.mode = 'navigating'
-check(s:handle('down', 'q', { cmd = true }, false, 0.4), 'overview protects underlying app')
+for _, key in ipairs({ 'w', 'q', 'c', 'v' }) do
+    check(not s:handle('down', key, { cmd = true }, false, 0.4), 'shortcut key-down passes through')
+    check(not s:handle('up', key, { cmd = true }, false, 0.5), 'shortcut key-up passes through')
+end
+check(s.mode == 'navigating', 'shortcut passthrough does not cancel navigation')
 s = Session.new(0.18)
 for _, flags in ipairs({ {}, {cmd=true,ctrl=true}, {cmd=true,alt=true}, {cmd=true,fn=true} }) do
     check(not s:handle('down', 'tab', flags, false, 0), 'unrelated chord passes through')

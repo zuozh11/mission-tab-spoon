@@ -65,9 +65,8 @@ function Session:handle(kind, key, flags, repeated, now)
             return false -- A different chord before the overview belongs to the application.
         end
     end
-    -- Prevent Command shortcuts from acting on an application underneath the overview.
-    self.swallowed[key] = true
-    return true
+    -- Only navigation and cancellation belong to MissionTab; preserve other shortcuts.
+    return false
 end
 
 function Session:advance(now)

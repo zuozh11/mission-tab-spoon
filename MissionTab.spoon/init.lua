@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.7', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.8', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -160,7 +160,12 @@ function obj:_tick()
                     end
                     if found then break end
                 end
-            else base = MC.pointerIndex(scoped, candidates, run.pointer) end
+            else
+                local hit
+                base, hit = MC.pointerIndex(scoped, candidates, run.pointer)
+                -- A resumed navigation key advances from an actual hover; blank space starts at item one.
+                run.stepOrigin = run.resumeSteps - (hit and run.resumeDirection or 0)
+            end
         end
         if base and not run.mouseSelection then
             local offset = s.steps - run.stepOrigin
@@ -310,7 +315,9 @@ function obj:_event(e)
         else
             local run = self.run
             run.screenID, run.screenFrame = screen:id(), screen:fullFrame()
-            run.pointer, run.stepOrigin = hs.mouse.absolutePosition(), self.session.steps
+            run.pointer = hs.mouse.absolutePosition()
+            run.resumeSteps = self.session.steps
+            run.resumeDirection = self.session.directions[#self.session.directions]
             run.recent, run.userPointer, run.pointerMoved, run.lastPointer = nil, false, false, nil
             run.mouseSelection, run.index, run.target, run.previous = false, nil, nil, nil
             run.openedAt = now()

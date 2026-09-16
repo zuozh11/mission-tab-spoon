@@ -159,7 +159,7 @@ function MC.pointerIndex(snapshot, ordered, point)
             if not hit then break end
             local id = hit:attributeValue('wid')
             for i, candidate in ipairs(ordered) do
-                if (id and candidate.id == id) or candidate.element == hit then return i end
+                if (id and candidate.id == id) or candidate.element == hit then return i, true end
             end
             hit = hit:attributeValue('AXParent')
         end
@@ -168,11 +168,11 @@ function MC.pointerIndex(snapshot, ordered, point)
     local found
     for i, candidate in ipairs(ordered) do
         if contains(candidate.frame, point) then
-            if found then return 1 end
+            if found then return 1, false end
             found = i
         end
     end
-    return found or 1
+    return found or 1, found ~= nil
 end
 
 function MC.find(snapshot, target)
