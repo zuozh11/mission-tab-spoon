@@ -50,19 +50,41 @@ function MC.snapshot()
     return result
 end
 
-function MC.order(candidates, windowIDs)
-    local rank = {}
-    for i, id in ipairs(windowIDs) do rank[id] = i end
+-- Clockwise around the centre of the thumbnail layout; recency chooses only the start.
+function MC.order(candidates, windowIDs, originalID)
+    if #candidates == 0 then return candidates, nil end
+    local left, top, right, bottom = math.huge, math.huge, -math.huge, -math.huge
+    for _, candidate in ipairs(candidates) do
+        local f = candidate.frame
+        left, top = math.min(left, f.x), math.min(top, f.y)
+        right, bottom = math.max(right, f.x + f.w), math.max(bottom, f.y + f.h)
+    end
+    local cx, cy = (left + right) / 2, (top + bottom) / 2
+    local positions = {}
+    for i, candidate in ipairs(candidates) do
+        local f = candidate.frame
+        local dx, dy = f.x + f.w / 2 - cx, f.y + f.h / 2 - cy
+        positions[candidate] = { angle = (dx == 0 and dy == 0) and 0 or math.atan(dx, -dy) % (2 * math.pi),
+            radius = dx * dx + dy * dy, ordinal = i }
+    end
     table.sort(candidates, function(a, b)
-        local ar, br = rank[a.id] or math.huge, rank[b.id] or math.huge
-        if ar ~= br then return ar < br end
-        if a.display.x ~= b.display.x then return a.display.x < b.display.x end
-        if a.display.y ~= b.display.y then return a.display.y < b.display.y end
-        if a.frame.y ~= b.frame.y then return a.frame.y < b.frame.y end
-        if a.frame.x ~= b.frame.x then return a.frame.x < b.frame.x end
-        return (a.id or 0) < (b.id or 0)
+        local ap, bp = positions[a], positions[b]
+        if ap.angle ~= bp.angle then return ap.angle < bp.angle end
+        if ap.radius ~= bp.radius then return ap.radius < bp.radius end
+        if a.id and b.id and a.id ~= b.id then return a.id < b.id end
+        return ap.ordinal < bp.ordinal
     end)
-    return candidates
+    for _, id in ipairs(windowIDs) do
+        if id ~= originalID then
+            for i, candidate in ipairs(candidates) do
+                if candidate.id == id then return candidates, i end
+            end
+        end
+    end
+    for i, candidate in ipairs(candidates) do
+        if originalID and candidate.id == originalID then return candidates, i end
+    end
+    return candidates, 1
 end
 
 function MC.find(snapshot, target)

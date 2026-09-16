@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.1.0', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.1.1', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -129,12 +129,8 @@ function obj:_tick()
         end
         -- A stable AX frame can precede the visible animation finishing. Require a short floor.
         if time - run.openedAt >= 0.25 and MC.stable(run.previous, snapshot) then
-            run.candidates = MC.order(snapshot.candidates, run.order)
+            run.candidates, run.base = MC.order(snapshot.candidates, run.order, run.originalID)
             run.backend, run.pid = snapshot.backend, snapshot.pid
-            run.base = 0
-            for i, candidate in ipairs(run.candidates) do
-                if candidate.id == run.originalID then run.base = i; break end
-            end
             s.mode = 'navigating'
         else
             run.previous = snapshot
@@ -168,8 +164,9 @@ function obj:_tick()
         self:_cancel('overview-replaced'); return
     end
     if s.mode == 'navigating' then
-        local base = run.base == 0 and s.steps < 0 and 1 or run.base
-        local index = ((base - 1 + s.steps) % #run.candidates) + 1
+        -- The first Tab opens at the recent window. Only later keys move around the layout.
+        local offset = s.steps - s.directions[1]
+        local index = ((run.base - 1 + offset) % #run.candidates) + 1
         local target = MC.find(snapshot, run.candidates[index])
         if not target then self:_cancel('target-disappeared'); return end
         local point = MC.point(snapshot, target)
