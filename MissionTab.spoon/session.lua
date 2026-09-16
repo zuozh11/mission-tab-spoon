@@ -11,6 +11,7 @@ function Session:reset()
     self.cmd = false
     self.steps = 0
     self.released = false
+    self.cancelledByUser = false
     -- Keep owned key-downs until their matching key-up, even after cancellation.
 end
 
@@ -41,7 +42,7 @@ function Session:handle(kind, key, flags, repeated, now)
         return true
     end
     if key == 'escape' then
-        self.mode = 'cancelling'
+        self.mode, self.cancelledByUser = 'cancelling', true
         self.swallowed[key] = true
         return true
     end

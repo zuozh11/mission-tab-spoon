@@ -57,7 +57,7 @@ local function fixture()
         local out={present=f.present,backend='WindowManager',pid=f.pid or 7,candidates={}}
         if f.present and not f.empty then
             for id=1,3 do if id~=f.removed then
-                out.candidates[#out.candidates+1]={id=id,element=id,frame={x=id*100,y=0,w=50,h=50},display={x=0,y=0}}
+                out.candidates[#out.candidates+1]={id=id,element=id,frame={x=id*100+(f.motion and f.time*100 or 0),y=0,w=50,h=50},display={x=0,y=0}}
             end end
         end
         return out
@@ -96,6 +96,64 @@ check(immediate.input(1,48,{cmd=true}), 'next gesture is accepted immediately af
 local settled=fixture(); settled.begin(); settled.ready(); settled.stuck=true
 settled.input(3,55,{}); settled.tick(0.55)
 check(settled.focused==2 and settled.toggles==1, 'settled release skips pending hover refresh and hover delay')
+local sequence=fixture(); sequence.begin(); sequence.input(3,55,{})
+sequence.stuck=true; sequence.tick(0.21)
+check(sequence.input(1,48,{cmd=true}), 'exit animation accepts the next gesture')
+sequence.input(2,48,{cmd=true}); sequence.input(1,48,{cmd=true}); sequence.input(2,48,{cmd=true})
+sequence.input(3,55,{})
+sequence.input(1,48,{cmd=true}); sequence.input(2,48,{cmd=true}); sequence.input(3,55,{})
+check(#sequence.spoon.queuedSessions==2 and sequence.spoon.queuedSessions[1].steps==2,
+    'exit animation retains navigation and separate released gestures')
+sequence.present=false; sequence.stuck=false; sequence.tick(0.24)
+check(sequence.spoon:status().state=='opening' and sequence.spoon.session.steps==2,
+    'queued gesture starts as soon as the previous overview disappears')
+sequence.time=0.27; sequence.spoon.workTimer.callback()
+check(sequence.present, 'existing worker continues with the new session')
+sequence.tick(0.3); sequence.tick(0.33)
+check(sequence.focused==2 and sequence.spoon:status().state=='opening', 'second gesture confirms its own navigation and advances queue')
+sequence.tick(0.36); sequence.tick(0.39); sequence.tick(0.42)
+check(sequence.toggles==3 and sequence.focused==1 and sequence.spoon:status().state=='idle',
+    'all three gestures finish without lost input or native replay')
+local cancelled=fixture(); cancelled.begin(); cancelled.input(3,55,{}); cancelled.stuck=true; cancelled.tick(0.21)
+cancelled.input(1,48,{cmd=true}); cancelled.input(2,48,{cmd=true}); cancelled.input(1,53,{cmd=true})
+cancelled.present=false; cancelled.stuck=false; cancelled.tick(0.24); cancelled.tick(0.27)
+check(cancelled.spoon:status().state=='idle' and cancelled.toggles==1, 'Escape cancels queued navigation before opening')
+check(cancelled.input(2,53,{}), 'queued Escape release remains owned after cancellation')
+local failed=fixture(); failed.begin(); failed.input(3,55,{}); failed.stuck=true; failed.tick(0.21)
+failed.input(1,48,{cmd=true}); failed.tick(2)
+check(failed.spoon:status().suspended and #failed.spoon.queuedSessions==0, 'close failure drops queued gestures')
+check(failed.input(2,48,{}), 'failed queue still consumes its matching key release')
+local moving=fixture(); moving.motion=true; moving.begin()
+moving.input(1,48,{cmd=true}); moving.input(2,48,{cmd=true}); moving.tick(0.3)
+check(moving.spoon:status().state=='opening' and moving.spoon.run.target.id==3,
+    'navigation updates the selected target while entry frames are still moving')
+moving.input(3,55,{}); moving.tick(0.33)
+check(moving.focused==3 and moving.toggles==1, 'release confirms without waiting for moving entry frames to settle')
+local held=fixture(); held.begin(); held.input(3,55,{}); held.stuck=true; held.tick(0.21)
+held.input(1,48,{cmd=true}); held.input(2,48,{cmd=true}); held.input(3,55,{})
+held.input(1,48,{cmd=true}); held.input(2,48,{cmd=true})
+held.present=false; held.stuck=false; held.tick(0.24)
+held.input(1,48,{cmd=true}); held.input(2,48,{cmd=true}); held.input(3,55,{})
+check(held.spoon.session.steps==1 and held.spoon.queuedSessions[1].steps==2
+    and held.spoon.queuedSessions[1].released, 'navigation belongs to the latest held gesture while earlier gestures drain')
+local early=fixture(); early.input(1,48,{cmd=true}); early.input(2,48,{cmd=true}); early.input(3,55,{})
+early.input(1,48,{cmd=true}); early.input(2,48,{cmd=true}); early.input(3,55,{})
+check(#early.spoon.queuedSessions==1 and early.spoon.session.steps==1,
+    'two gestures before the first worker tick stay separate')
+local skip=fixture(); skip.begin(); skip.input(3,55,{}); skip.stuck=true; skip.tick(0.21)
+skip.input(1,48,{cmd=true}); skip.input(2,48,{cmd=true}); skip.input(1,53,{cmd=true})
+skip.input(2,53,{cmd=true}); skip.input(3,55,{})
+skip.input(1,48,{cmd=true}); skip.input(2,48,{cmd=true}); skip.input(3,55,{})
+skip.present=false; skip.stuck=false; skip.tick(0.24); skip.tick(0.27)
+skip.tick(0.3); skip.tick(0.33); skip.tick(0.36)
+check(skip.toggles==2 and skip.focused==1 and skip.spoon:status().state=='idle',
+    'cancelling one queued gesture preserves later independent gestures')
+local interrupted=fixture(); interrupted.begin(); interrupted.input(3,55,{}); interrupted.stuck=true; interrupted.tick(0.21)
+interrupted.input(1,48,{cmd=true}); interrupted.input(2,48,{cmd=true}); interrupted.input(3,55,{})
+interrupted.spoon.sleepWatcher.callback(1)
+interrupted.present=false; interrupted.tick(0.24)
+check(interrupted.spoon:status().state=='idle' and #interrupted.spoon.queuedSessions==0,
+    'global sleep interruption discards pending gestures')
 local delayed=fixture(); delayed.hoverID=1; delayed.hoverReadyAt=0.7
 delayed.begin(); delayed.ready()
 check(delayed.pointer.x==225 and delayed.hoverID==1, 'early pointer placement can precede native hover readiness')

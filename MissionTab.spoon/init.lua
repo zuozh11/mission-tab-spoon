@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Command-Tab opens Mission Control; release Command to confirm the selected window.
-local obj = { name = 'MissionTab', version = '0.2.12', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.13', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -44,6 +44,7 @@ function obj:diagnose()
 end
 
 function obj:_finish(reason)
+    local resumeQueue = reason == 'committed' or (reason == 'cancelled' and self.session.cancelledByUser)
     local run = self.run
     if run and run.ownsMC then self.overviewOpen = MC.snapshot().present end
     if not self.overviewOpen then restorePointer(run) end
@@ -54,6 +55,16 @@ function obj:_finish(reason)
     self.lastResult.reason = reason
     self.run = nil
     self.session:reset()
+    if resumeQueue and not self.suspended and #self.queuedSessions > 0 then
+        local nextSession = table.remove(self.queuedSessions, 1)
+        for key in pairs(self.session.swallowed) do nextSession.swallowed[key] = true end
+        self.session = nextSession
+        return -- Keep the worker alive for input received during the exit animation.
+    end
+    for _, queued in ipairs(self.queuedSessions) do
+        for key in pairs(queued.swallowed) do self.session.swallowed[key] = true end
+    end
+    self.queuedSessions = {}
     if self.workTimer then self.workTimer:stop(); self.workTimer = nil end
 end
 
@@ -253,6 +264,10 @@ function obj:_safeTick()
         self.suspended = 'Runtime error; inspect MissionTab log and call start()'
         -- Stop owning input immediately. Do not guess a click or toggle after an AX error.
         self.run = nil
+        for _, queued in ipairs(self.queuedSessions) do
+            for key in pairs(queued.swallowed) do self.session.swallowed[key] = true end
+        end
+        self.queuedSessions = {}
         self.session:reset()
         if self.workTimer then self.workTimer:stop(); self.workTimer = nil end
     end
@@ -287,6 +302,31 @@ function obj:_event(e)
         end
         return false
     end
+    if not self.suspended and (#self.queuedSessions > 0
+        or (self.session.released and self.session.mode ~= 'idle' and self.session.mode ~= 'cancelling'
+            and (not self.run or not self.run.cancelReason))) then
+        -- Keep each new gesture while macOS finishes the previous exit. Releases still
+        -- belong to the session that swallowed their key-down, even across gestures.
+        if inputKind == 'up' then
+            if self.session.swallowed[key] then
+                return self.session:handle(inputKind, key, e:getFlags(), false, now())
+            end
+            for _, queued in ipairs(self.queuedSessions) do
+                if queued.swallowed[key] then
+                    return queued:handle(inputKind, key, e:getFlags(), false, now())
+                end
+            end
+        end
+        local queued = self.queuedSessions[#self.queuedSessions]
+        local fresh = not queued or (queued.released and inputKind == 'down' and key == 'tab')
+        if fresh then queued = Session.new() end
+        local consumed = queued:handle(inputKind, key, e:getFlags(),
+            e:getProperty(properties.keyboardEventAutorepeat) == 1, now())
+        if fresh and queued.mode ~= 'idle' then
+            self.queuedSessions[#self.queuedSessions + 1] = queued
+        end
+        return consumed
+    end
     local previousKeyCount = #(self.session.directions or {})
     local previousSerial = self.session.serial
     local wasIdle = self.session.mode == 'idle'
@@ -313,10 +353,11 @@ function obj:_event(e)
         if wasIdle and self.overviewOpen then self.session.mode = 'dismissing' end
     end
     if self.session.mode ~= 'idle' and not self.workTimer then
-        local session, serial = self.session, self.session.serial
-        self.workTimer = hs.timer.doEvery(0.03, function()
-            if self.session == session and session.serial == serial then self:_safeTick() end
+        local timer
+        timer = hs.timer.doEvery(0.03, function()
+            if self.workTimer == timer then self:_safeTick() end
         end)
+        self.workTimer = timer
     end
     return consumed
 end
@@ -326,7 +367,7 @@ function obj:start()
     if self.cleanup then self.restartAfterCleanup = true; return self end
     assert(self.openTimeout > 0 and self.hoverDelay >= 0 and self.closeTimeout > 0,
         'MissionTab timing values must be nonnegative (timeouts must be positive)')
-    self.session, self.suspended = Session.new(), nil
+    self.session, self.suspended, self.queuedSessions = Session.new(), nil, {}
     self.reverseKeyCode = self.reverseKeyCode or hs.keycodes.map['`'] or 50
     if not hs.accessibilityState() then self.suspended = 'Accessibility permission required'; return self end
     self.overviewOpen = MC.snapshot().present
@@ -335,28 +376,29 @@ function obj:start()
     self.health = hs.timer.doEvery(0.5, function()
         if not self.running then return end
         if hs.eventtap.isSecureInputEnabled() then
-            if self.session.mode ~= 'idle' then self.session.mode = 'cancelling' end
+            if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
             self.suspended = 'secure-input'
         elseif self.suspended == 'secure-input' then self.suspended = nil end
         if not self.tap:isEnabled() then
-            if self.session.mode ~= 'idle' then self.session.mode = 'cancelling' end
+            if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
             self.tap:start()
         end
         local ok, snapshot = pcall(MC.snapshot)
         if ok then self.overviewOpen = snapshot.present end
     end)
     self.screenWatcher = hs.screen.watcher.new(function()
-        if self.session.mode ~= 'idle' then self.session.mode = 'cancelling' end
+        if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
     end):start()
     self.sleepWatcher = hs.caffeinate.watcher.new(function(kind)
         if kind == hs.caffeinate.watcher.systemWillSleep or kind == hs.caffeinate.watcher.screensDidLock then
-            if self.session.mode ~= 'idle' then self.session.mode = 'cancelling' end
+            if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
         end
     end):start()
     return self
 end
 
 function obj:stop()
+    self.queuedSessions = {}
     self.restartAfterCleanup = false
     if self.tap then self.tap:stop(); self.tap = nil end
     for _, key in ipairs({ 'health', 'workTimer', 'screenWatcher', 'sleepWatcher' }) do
