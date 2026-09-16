@@ -4,6 +4,7 @@ local count = 0
 local function check(value, message) assert(value, message); count = count + 1 end
 local function fixture(holdDelay)
     local f = { time = 0, present = false, focused = 1, pointer = {x=900,y=900}, posted = {}, toggles = 0 }
+    f.snapshotCalls, f.pointCalls = 0, 0
     local function watcher(callback)
         return { callback=callback, start=function(self) self.enabled=true; return self end,
             stop=function(self) self.enabled=false end, isEnabled=function(self) return self.enabled end }
@@ -59,21 +60,24 @@ local function fixture(holdDelay)
             return e
         end}
     hs.canvas={new=function(frame)
-        local canvas={bounds=frame}
+        local canvas={bounds=frame,frameUpdates=0,shows=0}
         function canvas:level(value) self.windowLevel=value; return self end
         function canvas:behavior(value) self.behaviors=value; return self end
         function canvas:clickActivating(value) self.activates=value; return self end
         function canvas:canvasMouseEvents(...) self.mouseEvents={...}; return self end
         function canvas:mouseCallback(value) self.callback=value; return self end
         function canvas:appendElements(value) self.element=value; return self end
-        function canvas:frame(value) self.bounds=value; return self end
-        function canvas:show() self.visible=true; return self end
+        function canvas:frame(value) self.frameUpdates=self.frameUpdates+1; self.bounds=value; return self end
+        function canvas:show() self.shows=self.shows+1; self.visible=true; return self end
         function canvas:delete() self.deleted=true; self.visible=false end
         f.canvas=canvas
         return canvas
     end}
     local mc = dofile(root .. 'MissionTab.spoon/mission_control.lua')
+    local point=mc.point
+    function mc.point(...) f.pointCalls=f.pointCalls+1; return point(...) end
     function mc.snapshot()
+        f.snapshotCalls=f.snapshotCalls+1
         local out={present=f.present,backend='WindowManager',pid=f.pid or 7,candidates={}}
         if f.present and not f.empty then
             for id=1,3 do if id~=f.removed then
@@ -364,4 +368,18 @@ check(not empty.spoon:status().suspended and empty.spoon:status().lastResult.rea
 empty.empty=false; empty.time=3; empty.input(1,48,{cmd=true}); empty.input(2,48,{cmd=true})
 empty.tick(3.03); empty.tick(3.06); empty.input(3,55,{}); empty.tick(3.09); empty.tick(3.12)
 check(empty.spoon:status().lastResult.matched, 'next gesture works when windows become available')
+local idle=fixture()
+for _=1,100 do idle.spoon.health.callback() end
+check(idle.snapshotCalls==0, 'idle health checks do not enumerate accessibility windows')
+local stationary=fixture(); stationary.begin(); stationary.ready(); stationary.tick(0.9)
+local updates, shows=stationary.canvas.frameUpdates, stationary.canvas.shows
+for i=1,10 do stationary.tick(0.9+i*0.03) end
+check(stationary.canvas.frameUpdates==updates and stationary.canvas.shows==shows,
+    'unchanged selection does not send redundant native canvas updates')
+local movingPoint=fixture(); movingPoint.begin(); movingPoint.ready(); movingPoint.tick(0.9)
+movingPoint.motion=true
+local points=movingPoint.pointCalls
+movingPoint.tick(1)
+check(movingPoint.pointCalls-points==1 and movingPoint.pointer.x==325,
+    'moving target calculates one safe point and still moves the pointer to that point')
 return {passed=true,assertions=count}

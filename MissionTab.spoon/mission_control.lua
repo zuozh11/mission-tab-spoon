@@ -27,8 +27,9 @@ function MC.snapshot()
         if display.AXIdentifier == 'mc.display' then
             result.present, result.backend, result.pid = true, 'WindowManager', pid
             local displayFrame = display.AXFrame or { x = 0, y = 0 }
+            local displayID = display:attributeValue('AXDisplayID')
             for _, element in ipairs(children(display)) do
-                if element.AXRole == 'AXButton' then add(element, displayFrame, display:attributeValue('AXDisplayID')) end
+                if element.AXRole == 'AXButton' then add(element, displayFrame, displayID) end
             end
         end
     end
@@ -40,9 +41,10 @@ function MC.snapshot()
             for _, display in ipairs(children(group)) do
                 if display.AXIdentifier == 'mc.display' then
                     local displayFrame = display.AXFrame or { x = 0, y = 0 }
+                    local displayID = display:attributeValue('AXDisplayID')
                     for _, windows in ipairs(children(display)) do
                         if windows.AXIdentifier == 'mc.windows' then
-                            for _, element in ipairs(children(windows)) do add(element, displayFrame, display:attributeValue('AXDisplayID')) end
+                            for _, element in ipairs(children(windows)) do add(element, displayFrame, displayID) end
                         end
                     end
                 end

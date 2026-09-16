@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.17', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.18', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -9,8 +9,7 @@ local types, properties = event.types, event.properties
 local marker = 0x4D544142
 local function now() return hs.timer.absoluteTime() / 1e9 end
 local function tagged(e) return e:setProperty(properties.eventSourceUserData, marker) end
-local function hoverChanged(run, target, snapshot)
-    local point = MC.point(snapshot, target)
+local function hoverChanged(run, point)
     return not point or not run.lastPointer
         or math.abs(point.x - run.lastPointer.x) + math.abs(point.y - run.lastPointer.y) > 2
 end
@@ -60,10 +59,14 @@ end
 function obj:_highlight(target)
     if not target then
         if self.highlight then self.highlight:delete(); self.highlight = nil end
+        self.highlightFrame = nil
         return
     end
     local f = target.frame
     local frame = { x = f.x + 2, y = f.y + 2, w = math.max(1, f.w - 4), h = math.max(1, f.h - 4) }
+    local previous = self.highlightFrame
+    if previous and previous.x == frame.x and previous.y == frame.y
+        and previous.w == frame.w and previous.h == frame.h then return end
     if not self.highlight then
         self.highlight = hs.canvas.new(frame):level('overlay')
             :behavior({ 'canJoinAllSpaces', 'stationary' }):clickActivating(false)
@@ -74,6 +77,7 @@ function obj:_highlight(target)
     else
         self.highlight:frame(frame)
     end
+    self.highlightFrame = frame
     self.highlight:show()
 end
 
@@ -128,8 +132,7 @@ function obj:_cancel(reason)
     self.session.mode = 'closing'
 end
 
-function obj:_hover(target, time, snapshot)
-    local point = MC.point(snapshot, target)
+function obj:_hover(point, time)
     if not point then self:_cancel('target-occluded'); return false end
     self.run.pointerMoved, self.run.lastPointer = true, point
     hs.mouse.absolutePosition(point)
@@ -251,10 +254,11 @@ function obj:_tick()
             local index = ((base - 1 + offset) % #candidates) + 1
             local target = candidates[index]
             if not s.released then self:_highlight(target) end
+            local point = not s.released and MC.point(snapshot, target)
             if not run.target or run.target.id ~= target.id
-                or hoverChanged(run, target, snapshot) then
+                or hoverChanged(run, point) then
                 run.index, run.target = index, target
-                if not s.released and not self:_hover(target, time, snapshot) then return end
+                if not s.released and not self:_hover(point, time) then return end
             end
         end
         if s.released and (base or (run.mouseSelection and snapshot.present)) then
@@ -325,10 +329,11 @@ function obj:_tick()
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.candidates[index])
         if not target then self:_cancel('target-disappeared'); return end
         if not s.released then self:_highlight(target) end
-        if run.index ~= index or hoverChanged(run, target, snapshot)
+        local point = not s.released and MC.point(snapshot, target)
+        if run.index ~= index or hoverChanged(run, point)
             or (run.hoverRefreshAt and time >= run.hoverRefreshAt) then
             run.index, run.target = index, target
-            if not s.released and not self:_hover(target, time, snapshot) then return end
+            if not s.released and not self:_hover(point, time) then return end
             if run.hoverRefreshAt and time >= run.hoverRefreshAt then run.hoverRefreshAt = nil end
         end
         if s.released then s.mode = 'committing' end

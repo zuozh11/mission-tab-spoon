@@ -3,7 +3,10 @@ local count=0
 local function check(value,message) assert(value,message); count=count+1 end
 local function node(attributes, children)
     attributes.AXChildren=children or {}
-    function attributes:attributeValue(name) return self[name] end
+    function attributes:attributeValue(name)
+        if name=='AXDisplayID' then self.displayReads=(self.displayReads or 0)+1 end
+        return self[name]
+    end
     return attributes
 end
 local function window(id,x)
@@ -21,6 +24,7 @@ local mc=assert(loadfile(root..'MissionTab.spoon/mission_control.lua','t',setmet
 local snap=mc.snapshot()
 check(snap.backend=='WindowManager' and #snap.candidates==2, 'new tree enumerates windows, excludes spaces')
 check(snap.candidates[1].id~=snap.candidates[2].id, 'same app and title remain distinct by wid')
+check(display.displayReads==1, 'display identity is read once per display rather than once per window')
 local ordered,initial=mc.order(snap.candidates)
 check(ordered[initial].id==10, 'spatial order starts at upper-left; controller owns MRU selection')
 check(mc.stable(snap,mc.snapshot()), 'unchanged geometry is ready')
