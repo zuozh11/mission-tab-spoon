@@ -3,7 +3,7 @@ local Session = dofile(root .. 'MissionTab.spoon/session.lua')
 local count = 0
 local function check(value, message) assert(value, message); count = count + 1 end
 local function begin(direction)
-    local s = Session.new()
+    local s = Session.new(0)
     check(s:handle('down', 'tab', { cmd = true, shift = direction == -1 }, false, 0), 'owns first Tab')
     return s
 end
@@ -45,11 +45,33 @@ for _, key in ipairs({ 'w', 'q', 'c', 'v' }) do
     check(not s:handle('up', key, { cmd = true }, false, 0.5), 'shortcut key-up passes through')
 end
 check(s.mode == 'navigating', 'shortcut passthrough does not cancel navigation')
-s = Session.new()
+s = Session.new(0)
 for _, flags in ipairs({ {}, {cmd=true,ctrl=true}, {cmd=true,alt=true}, {cmd=true,fn=true} }) do
     check(not s:handle('down', 'tab', flags, false, 0), 'unrelated chord passes through')
 end
 s = begin(-1)
 check(s.steps == -1, 'reverse initial chord')
 check(not s:handle('flags', 'shift', {cmd=true}, false, 0.1), 'physical modifiers always pass through')
+local quick = Session.new(0.18)
+quick:handle('down', 'tab', {cmd=true}, false, 0)
+quick:handle('up', 'tab', {cmd=true}, false, 0.03)
+quick:handle('flags', 'cmd', {}, false, 0.08)
+check(quick.mode == 'replay', 'short release uses native replay')
+local held = Session.new(0.18)
+held:handle('down', 'tab', {cmd=true}, false, 0)
+held:advance(0.3)
+check(held.mode == 'pending', 'held Tab waits for its release')
+held:handle('up', 'tab', {cmd=true}, false, 0.3)
+check(held.mode == 'opening', 'long hold opens once Tab is released')
+local queued = Session.new(0.18)
+queued:handle('down', 'tab', {cmd=true}, false, 0)
+queued:handle('up', 'tab', {cmd=true}, false, 0.03)
+queued:handle('flags', 'cmd', {}, false, 0.3)
+check(queued.mode == 'opening' and queued.released, 'queued long hold stays overview even without worker ticks')
+local shortcut = Session.new(0.18)
+shortcut:handle('down', 'tab', {cmd=true}, false, 0)
+shortcut:handle('up', 'tab', {cmd=true}, false, 0.03)
+check(not shortcut:handle('down', 'q', {cmd=true}, false, 0.05), 'pending application chord passes through')
+shortcut:handle('flags', 'cmd', {}, false, 0.08)
+check(shortcut.mode == 'cancelling', 'other pending chord prevents later native replay')
 return { assertions = count, passed = true }

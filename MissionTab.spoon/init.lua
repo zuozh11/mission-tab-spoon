@@ -1,6 +1,6 @@
 --- === MissionTab ===
---- Command-Tab opens Mission Control; release Command to confirm the selected window.
-local obj = { name = 'MissionTab', version = '0.2.13', author = 'zuozhi', license = 'MIT' }
+--- Short Command-Tab switches applications; hold Command to navigate Mission Control.
+local obj = { name = 'MissionTab', version = '0.2.14', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -22,6 +22,7 @@ local function restorePointer(run)
     end
 end
 
+obj.holdDelay = 0.18
 obj.openTimeout = 1.5
 obj.hoverDelay = 0.25
 obj.closeTimeout = 1.5
@@ -44,7 +45,7 @@ function obj:diagnose()
 end
 
 function obj:_finish(reason)
-    local resumeQueue = reason == 'committed' or (reason == 'cancelled' and self.session.cancelledByUser)
+    local resumeQueue = reason == 'committed' or reason == 'native-replay' or (reason == 'cancelled' and self.session.cancelledByUser)
     local run = self.run
     if run and run.ownsMC then self.overviewOpen = MC.snapshot().present end
     if not self.overviewOpen then restorePointer(run) end
@@ -101,9 +102,36 @@ function obj:_hover(target, time, snapshot)
     return true
 end
 
+function obj:_replay(remainingFlags)
+    -- Replay only when this gesture owns the controller, so it cannot overtake an exit.
+    remainingFlags = remainingFlags or hs.eventtap.checkKeyboardModifiers()
+    local releasedFlags = {}
+    for key, value in pairs(remainingFlags) do
+        if key ~= 'cmd' then releasedFlags[key] = value end
+    end
+    self.lastResult = nil
+    tagged(event.newKeyEvent('cmd', true)):post()
+    for _, direction in ipairs(self.session.directions) do
+        if direction < 0 then tagged(event.newKeyEvent('shift', true)):post() end
+        local mods = direction < 0 and { 'cmd', 'shift' } or { 'cmd' }
+        tagged(event.newKeyEvent(mods, 'tab', true)):post()
+        tagged(event.newKeyEvent(mods, 'tab', false)):post()
+        if direction < 0 then tagged(event.newKeyEvent('shift', false)):post() end
+    end
+    tagged(event.newKeyEvent('cmd', false):setFlags(releasedFlags)):post()
+    -- A queued replay may run after the user has already started holding Command again.
+    if remainingFlags.cmd then
+        tagged(event.newKeyEvent('cmd', true):setFlags(remainingFlags)):post()
+    end
+    self:_finish('native-replay')
+end
+
 function obj:_tick()
     local s, time = self.session, now()
     if s.mode == 'idle' then return end
+    if s.mode == 'replay' then self:_replay(); return end
+    s:advance(time)
+    if s.mode == 'pending' then return end
     if not self.run then
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()
@@ -319,7 +347,7 @@ function obj:_event(e)
         end
         local queued = self.queuedSessions[#self.queuedSessions]
         local fresh = not queued or (queued.released and inputKind == 'down' and key == 'tab')
-        if fresh then queued = Session.new() end
+        if fresh then queued = Session.new(self.holdDelay) end
         local consumed = queued:handle(inputKind, key, e:getFlags(),
             e:getProperty(properties.keyboardEventAutorepeat) == 1, now())
         if fresh and queued.mode ~= 'idle' then
@@ -352,6 +380,7 @@ function obj:_event(e)
         self.lastResult = nil
         if wasIdle and self.overviewOpen then self.session.mode = 'dismissing' end
     end
+    if self.session.mode == 'replay' then self:_replay(e:getFlags()); return consumed end
     if self.session.mode ~= 'idle' and not self.workTimer then
         local timer
         timer = hs.timer.doEvery(0.03, function()
@@ -365,9 +394,9 @@ end
 function obj:start()
     if self.running then self:stop() end
     if self.cleanup then self.restartAfterCleanup = true; return self end
-    assert(self.openTimeout > 0 and self.hoverDelay >= 0 and self.closeTimeout > 0,
+    assert(self.holdDelay >= 0 and self.openTimeout > 0 and self.hoverDelay >= 0 and self.closeTimeout > 0,
         'MissionTab timing values must be nonnegative (timeouts must be positive)')
-    self.session, self.suspended, self.queuedSessions = Session.new(), nil, {}
+    self.session, self.suspended, self.queuedSessions = Session.new(self.holdDelay), nil, {}
     self.reverseKeyCode = self.reverseKeyCode or hs.keycodes.map['`'] or 50
     if not hs.accessibilityState() then self.suspended = 'Accessibility permission required'; return self end
     self.overviewOpen = MC.snapshot().present

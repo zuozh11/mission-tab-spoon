@@ -2,13 +2,14 @@
 
 **给 macOS 原生调度中心加上 `⌘Tab` 窗口导航。**
 
-按下 `⌘Tab` 展开窗口；按 Tab 选择，松开 Command 确认。所有操作使用同一路径，不区分长短按。MissionTab 是一个 [Hammerspoon](https://www.hammerspoon.org/) Spoon，使用系统调度中心和原生悬停高亮。
+短按 `⌘Tab` 直接切换应用；继续按住 Command 进入调度中心，按 Tab 选择，松开 Command 确认。MissionTab 是一个 [Hammerspoon](https://www.hammerspoon.org/) Spoon，使用系统调度中心和原生悬停高亮。
 
 [下载安装包](https://github.com/zuozh11/mission-tab-spoon/releases/latest/download/MissionTab.spoon.zip) · [版本记录](CHANGELOG.md) · [反馈问题](https://github.com/zuozh11/mission-tab-spoon/issues)
 
 ## 功能
 
-- **直接选择窗口**：按下 `⌘Tab` 即进入调度中心；短按也通过调度中心确认目标。
+- **短按直接切换**：短按 `⌘Tab` 使用原生应用切换，不打开调度中心。
+- **长按选择窗口**：松开 Tab、继续按住 Command 达到门槛后进入调度中心。
 - **当前屏幕导航**：只选择鼠标所在屏幕上、调度中心实际展示的窗口。
 - **最近窗口起步**：进入时优先选择最近使用的其他窗口，后续按空间顺序循环。
 - **原生选中反馈**：直接移动可见光标，用系统悬停框显示目标。
@@ -63,11 +64,12 @@ git pull --ff-only
 
 ## 操作指南
 
-第一次使用：**按下 `⌘Tab` → 继续按住 Command，按 Tab 选择 → 松开 Command 确认。**
+第一次使用：**按下 `⌘Tab` → 松开 Tab，继续按住 Command → 按 Tab 选择 → 松开 Command 确认。**
 
 | 操作 | 行为 |
 | --- | --- |
-| 按下 `⌘Tab` | 直接进入调度中心，默认启用键盘选择 |
+| 短按 `⌘Tab` | 直接原生应用切换 |
+| 松开 Tab 后继续按住 Command | 达到长按门槛后进入调度中心，默认启用键盘选择 |
 | 入场动画中松开 Command | 目标窗口可用后立即请求退出并聚焦 |
 | 退出动画期间再次按 `⌘Tab` | 接收新的选择、确认或取消操作，退出后按手势顺序继续 |
 | Tab | 顺时针选择下一项 |
@@ -104,12 +106,14 @@ MissionTab **会实际移动光标**，不隐藏光标，也不绘制额外边�
 
 ```lua
 hs.loadSpoon('MissionTab')
+spoon.MissionTab.holdDelay = 0.18
 spoon.MissionTab.hoverDelay = 0.25
 spoon.MissionTab:start()
 ```
 
 | 设置 | 默认值 | 作用 |
 | --- | --- | --- |
+| `holdDelay` | `0.18` 秒 | 从首次 Tab 按下计时，Tab 松开且 Command 仍按住时进入调度中心；设为 `0` 可恢复统一入口 |
 | `hoverDelay` | `0.25` 秒 | 布局稳定后补发悬停反馈的间隔，不阻塞松键确认 |
 | `openTimeout` | `1.5` 秒 | 等待调度中心暴露可用目标或稳定导航布局的期限 |
 | `closeTimeout` | `1.5` 秒 | 等待调度中心退出的期限 |
@@ -122,7 +126,7 @@ spoon.MissionTab:start()
 | 现象 | 检查方式 |
 | --- | --- |
 | 快捷键不生效或切换异常 | 检查辅助功能权限、配置是否加载，以及其他切换器是否占用 `⌘Tab` |
-| 松键后没有立即完成切换 | 当前统一走调度中心；确认不再等待布局或悬停，但系统动画与窗口信息出现时机仍由 macOS 控制 |
+| 松键后没有立即完成切换 | 短按直接切换应用；已进入调度中心时，确认不等待布局或悬停，系统动画与窗口信息出现时机仍由 macOS 控制 |
 | 输入密码时不生效 | Secure Input 开启时暂停接管，解除后自动恢复 |
 | 窗口没有参与循环 | 检查是否在鼠标所在屏幕、是否出现在当前调度中心，以及是否已最小化 |
 | 切换取消或插件暂停 | 查看状态与日志；解决结构不兼容或超时问题后执行 `start()` 重试 |

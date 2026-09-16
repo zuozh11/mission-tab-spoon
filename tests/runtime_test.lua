@@ -2,7 +2,7 @@
 local root = debug.getinfo(1, 'S').source:sub(2):match('(.*/)') .. '../'
 local count = 0
 local function check(value, message) assert(value, message); count = count + 1 end
-local function fixture()
+local function fixture(holdDelay)
     local f = { time = 0, present = false, focused = 1, pointer = {x=900,y=900}, posted = {}, toggles = 0 }
     local function watcher(callback)
         return { callback=callback, start=function(self) self.enabled=true; return self end,
@@ -40,7 +40,7 @@ local function fixture()
             if not f.stuck then f.present=not f.present; f.focused=f.hoverID or f.focused end
         end},
         screen={watcher={new=watcher}},caffeinate={watcher={new=watcher,systemWillSleep=1,screensDidLock=2}},
-        eventtap={new=function(_,fn) return watcher(fn) end,isSecureInputEnabled=function() return f.secure end},
+        eventtap={new=function(_,fn) return watcher(fn) end,isSecureInputEnabled=function() return f.secure end,checkKeyboardModifiers=function() return f.modifiers or {} end},
     }
     hs.eventtap.event={types={keyDown=1,keyUp=2,flagsChanged=3,mouseMoved=4,leftMouseDown=5,rightMouseDown=6},
         properties={eventSourceUserData='tag',keyboardEventAutorepeat='repeat',mouseEventDeltaX='dx',mouseEventDeltaY='dy'},
@@ -65,7 +65,9 @@ local function fixture()
     local env=setmetatable({hs=hs,dofile=function(path)
         if path:match('mission_control.lua$') then return mc else return dofile(path) end
     end},{__index=_G})
-    f.spoon=assert(loadfile(root .. 'MissionTab.spoon/init.lua','t',env))():start()
+    f.spoon=assert(loadfile(root .. 'MissionTab.spoon/init.lua','t',env))()
+    if holdDelay ~= nil then f.spoon.holdDelay=holdDelay else f.spoon.holdDelay=0 end
+    f.spoon:start()
     function f.input(kind,key,flags,tag)
         local e=newEvent(kind,key,flags); if tag then e.props.tag=tag end
         return f.spoon:_event(e)
@@ -82,6 +84,32 @@ local function fixture()
     function f.ready() f.tick(0.5); f.tick(0.54) end
     return f
 end
+local native=fixture(0.18)
+native.input(1,48,{cmd=true}); native.input(2,48,{cmd=true}); native.tick(0.08)
+native.input(3,55,{})
+check(#native.posted==4 and not native.present and native.spoon:status().state=='idle',
+    'short press immediately replays native switching without opening overview')
+check(native.spoon:status().lastResult.reason=='native-replay' and native.posted[4].flags.cmd==nil,
+    'native replay releases Command and clears previous target diagnostics')
+native.input(1,48,{cmd=true}); native.input(3,55,{})
+check(#native.posted==8 and native.input(2,48,{}), 'consecutive short gestures and late Tab release are preserved')
+local mixed=fixture(0.18); mixed.begin(); mixed.input(3,55,{}); mixed.stuck=true; mixed.tick(0.21)
+local beforeReplay=#mixed.posted
+mixed.input(1,48,{cmd=true}); mixed.input(2,48,{cmd=true}); mixed.input(3,55,{})
+mixed.input(1,48,{cmd=true}); mixed.input(2,48,{cmd=true})
+mixed.modifiers={cmd=true}
+check(#mixed.posted==beforeReplay, 'short gesture during exit waits its turn instead of replaying into overview')
+mixed.present=false; mixed.stuck=false; mixed.tick(0.24); mixed.tick(0.27)
+check(#mixed.posted==beforeReplay+5 and mixed.posted[#mixed.posted].flags.cmd,
+    'queued native replay commits then restores Command held for the next gesture')
+check(mixed.spoon.session.mode=='pending' and #mixed.spoon.queuedSessions==0,
+    'native replay continues to the next queued gesture')
+mixed.tick(0.5)
+check(mixed.present and mixed.spoon:status().state=='opening', 'next long gesture still opens overview')
+local reverse=fixture(0.18)
+reverse.input(1,48,{cmd=true,shift=true}); reverse.input(2,48,{cmd=true,shift=true}); reverse.input(3,55,{shift=true})
+check(#reverse.posted==6 and reverse.posted[3].flags[2]=='shift' and reverse.posted[6].flags.shift,
+    'reverse short replay preserves direction and remaining physical Shift')
 local immediate=fixture(); immediate.hoverReadyAt=10; immediate.stuck=true
 immediate.input(1,48,{cmd=true}); immediate.tick(0.03)
 immediate.input(3,55,{}); immediate.tick(0.06)
