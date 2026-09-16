@@ -1,6 +1,6 @@
 --- === MissionTab ===
---- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.9', author = 'zuozhi', license = 'MIT' }
+--- Command-Tab always opens Mission Control; release Command to confirm.
+local obj = { name = 'MissionTab', version = '0.2.10', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -22,7 +22,7 @@ local function restorePointer(run)
     end
 end
 
-obj.holdDelay = 0.18
+obj.holdDelay = 0.18 -- Compatibility only; this experiment has no short/long threshold.
 obj.openTimeout = 1.5
 obj.hoverDelay = 0.25
 obj.closeTimeout = 1.5
@@ -91,24 +91,9 @@ function obj:_hover(target, time, snapshot)
     return true
 end
 
-function obj:_replay(remainingFlags)
-    -- Emit inside the release callback, so a second fast chord cannot overtake this one.
-    tagged(event.newKeyEvent('cmd', true)):post()
-    for _, direction in ipairs(self.session.directions) do
-        if direction < 0 then tagged(event.newKeyEvent('shift', true)):post() end
-        local mods = direction < 0 and { 'cmd', 'shift' } or { 'cmd' }
-        tagged(event.newKeyEvent(mods, 'tab', true)):post()
-        tagged(event.newKeyEvent(mods, 'tab', false)):post()
-        if direction < 0 then tagged(event.newKeyEvent('shift', false)):post() end
-    end
-    tagged(event.newKeyEvent('cmd', false):setFlags(remainingFlags or {})):post()
-    self:_finish('native-replay')
-end
-
 function obj:_tick()
     local s, time = self.session, now()
     if s.mode == 'idle' then return end
-    if s.mode == 'replay' then self:_replay(); return end
     if not self.run then
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()
@@ -124,8 +109,6 @@ function obj:_tick()
     end
     local run = self.run
     if s.mode == 'cancelling' then self:_cancel('cancelled'); return end
-    s:advance(time)
-    if s.mode == 'pending' then return end
     local snapshot = MC.snapshot()
     if snapshot.present and run.ownsMC then run.sawMC = true end
     if s.mode == 'dismissing' then
@@ -328,7 +311,6 @@ function obj:_event(e)
         self.lastResult = nil
         if wasIdle and self.overviewOpen then self.session.mode = 'dismissing' end
     end
-    if self.session.mode == 'replay' then self:_replay(e:getFlags()); return consumed end
     if self.session.mode ~= 'idle' and not self.workTimer then
         local session, serial = self.session, self.session.serial
         self.workTimer = hs.timer.doEvery(0.03, function()
@@ -341,9 +323,9 @@ end
 function obj:start()
     if self.running then self:stop() end
     if self.cleanup then self.restartAfterCleanup = true; return self end
-    assert(self.holdDelay >= 0 and self.openTimeout > 0 and self.hoverDelay >= 0 and self.closeTimeout > 0,
+    assert(self.openTimeout > 0 and self.hoverDelay >= 0 and self.closeTimeout > 0,
         'MissionTab timing values must be nonnegative (timeouts must be positive)')
-    self.session, self.suspended = Session.new(self.holdDelay), nil
+    self.session, self.suspended = Session.new(), nil
     self.reverseKeyCode = self.reverseKeyCode or hs.keycodes.map['`'] or 50
     if not hs.accessibilityState() then self.suspended = 'Accessibility permission required'; return self end
     self.overviewOpen = MC.snapshot().present
