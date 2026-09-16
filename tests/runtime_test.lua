@@ -116,6 +116,19 @@ local function fixture(holdDelay)
     function f.ready() f.tick(0.5); f.tick(0.54) end
     return f
 end
+for _,shift in ipairs({false,true}) do
+    local entry=fixture(); entry.motion=true
+    entry.input(1,48,{cmd=true,shift=shift}); entry.input(2,48,{cmd=true,shift=shift})
+    entry.tick(0.03); entry.tick(0.2); entry.tick(0.4)
+    entry.motion=false; entry.ready(); entry.tick(0.9)
+    check(entry.pointer.x==900 and entry.pointer.y==900 and #entry.posted==0,
+        'entry and delayed hover refresh preserve pointer for either navigation direction')
+    check(entry.spoon.run.target.id==2 and entry.spoon.highlight,
+        'entry still selects and highlights the MRU window')
+    entry.input(3,55,{}); entry.tick(0.93); entry.tick(0.96)
+    check(entry.focused==2 and entry.spoon:status().lastResult.matched,
+        'entry selection confirms by window ID without initial pointer placement')
+end
 local reverseMask=fixture(); reverseMask.begin(); reverseMask.ready()
 local originalCanvas=reverseMask.canvas
 for _,id in ipairs({1,3,2,1}) do
@@ -170,10 +183,10 @@ end
 local temporaryOverlap=fixture(); temporaryOverlap.occluded=true
 temporaryOverlap.begin(); temporaryOverlap.ready()
 temporaryOverlap.occluded=false; temporaryOverlap.tick(0.6)
-check(temporaryOverlap.pointer.x==225 and temporaryOverlap.toggles==0,
-    'native hover resumes once thumbnail has a safe visible area')
+check(temporaryOverlap.pointer.x==900 and temporaryOverlap.toggles==0,
+    'entry preserves the pointer even when a thumbnail becomes safe to hover')
 temporaryOverlap.input(1,48,{cmd=true}); temporaryOverlap.input(2,48,{cmd=true}); temporaryOverlap.tick(0.63)
-check(temporaryOverlap.spoon.run.target.id==3 and temporaryOverlap.toggles==0,
+check(temporaryOverlap.spoon.run.target.id==3 and temporaryOverlap.pointer.x==325 and temporaryOverlap.toggles==0,
     'navigation continues after temporary thumbnail overlap')
 native.input(1,48,{cmd=true}); native.input(2,48,{cmd=true}); native.tick(0.08)
 native.input(3,55,{})
@@ -333,9 +346,10 @@ check(interrupted.spoon:status().state=='idle' and #interrupted.spoon.queuedSess
     'global sleep interruption discards pending gestures')
 local delayed=fixture(); delayed.hoverID=1; delayed.hoverReadyAt=0.7
 delayed.begin(); delayed.ready()
-check(delayed.pointer.x==225 and delayed.hoverID==1, 'early pointer placement can precede native hover readiness')
+delayed.input(1,48,{cmd=true}); delayed.input(2,48,{cmd=true}); delayed.tick(0.57)
+check(delayed.pointer.x==325 and delayed.hoverID==1, 'navigation pointer placement can precede native hover readiness')
 delayed.tick(0.8)
-check(delayed.hoverID==2, 'stationary target receives native hover refresh after opening settles')
+check(delayed.hoverID==3, 'stationary target receives native hover refresh after opening settles')
 local posted=#delayed.posted
 delayed.tick(1); delayed.tick(1.2)
 check(#delayed.posted==posted, 'opening refresh ends without an endless event stream')
@@ -472,9 +486,10 @@ for i=1,10 do stationary.tick(0.9+i*0.03) end
 check(stationary.canvas.frameUpdates==updates and stationary.canvas.shows==shows,
     'unchanged selection does not send redundant native canvas updates')
 local movingPoint=fixture(); movingPoint.begin(); movingPoint.ready(); movingPoint.tick(0.9)
+movingPoint.input(1,48,{cmd=true}); movingPoint.input(2,48,{cmd=true}); movingPoint.tick(0.93)
 movingPoint.motion=true
 local points=movingPoint.pointCalls
 movingPoint.tick(1)
-check(movingPoint.pointCalls-points==1 and movingPoint.pointer.x==325,
+check(movingPoint.pointCalls-points==1 and movingPoint.pointer.x==425,
     'moving target calculates one safe point and still moves the pointer to that point')
 return {passed=true,assertions=count}

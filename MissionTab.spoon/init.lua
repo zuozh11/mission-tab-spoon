@@ -143,6 +143,9 @@ function obj:_cancel(reason)
 end
 
 function obj:_hover(point, time)
+    -- Entry selects and highlights the MRU window without moving the user's pointer.
+    -- Only subsequent navigation keys opt into pointer-based native hover feedback.
+    if #self.session.directions == 1 then return end
     -- Overlap can hide every safe hover point, especially during layout changes.
     -- Keep keyboard selection: confirmation uses the window ID, not the pointer.
     if not point then return end
