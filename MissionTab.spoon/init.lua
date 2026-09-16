@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.0', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.1', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -152,7 +152,10 @@ function obj:_tick()
         -- Preview as soon as AX exposes a usable frame; keep following it during animation.
         -- Stabilization only freezes the clockwise order and permits confirmation.
         local candidates, base = MC.order(snapshot.candidates, run.order, run.originalID)
-        if base then
+        if run.mouseSelection and #s.directions ~= run.mouseKeyCount then
+            run.mouseSelection, run.index, run.target = false, nil, nil
+        end
+        if base and not run.mouseSelection then
             local offset = s.steps - s.directions[1]
             local index = ((base - 1 + offset) % #candidates) + 1
             local target = candidates[index]
@@ -205,6 +208,19 @@ function obj:_tick()
     if snapshot.backend ~= run.backend or snapshot.pid ~= run.pid then
         self:_cancel('overview-replaced'); return
     end
+    if run.mouseSelection then
+        if #s.directions ~= run.mouseKeyCount then
+            run.mouseSelection, run.index = false, nil
+            s.mode = 'navigating'
+        else
+            if s.released then
+                run.target = nil -- Let Mission Control confirm the user's mouse selection.
+                hs.spaces.toggleMissionControl()
+                run.closing, s.mode = time, 'closing'
+            end
+            return
+        end
+    end
     if s.mode == 'navigating' then
         -- The first Tab opens at the recent window. Only later keys move around the layout.
         local offset = s.steps - s.directions[1]
@@ -249,6 +265,18 @@ end
 function obj:_event(e)
     if e:getProperty(properties.eventSourceUserData) == marker then return false end
     local kind = e:getType()
+    if kind == types.mouseMoved then
+        local run, mode = self.run, self.session.mode
+        local motion = math.abs(e:getProperty(properties.mouseEventDeltaX))
+            + math.abs(e:getProperty(properties.mouseEventDeltaY))
+        if run and run.ownsMC and motion > 0
+            and (mode == 'opening' or mode == 'navigating' or mode == 'committing') then
+            run.mouseSelection = true
+            run.mouseKeyCount = #self.session.directions
+            self:_hidePreview()
+        end
+        return false
+    end
     local keyCode = e:getKeyCode()
     local key = keyCode == hs.keycodes.map.tab and 'tab'
         or keyCode == self.reverseKeyCode and 'grave'
@@ -289,7 +317,7 @@ function obj:start()
     self.reverseKeyCode = self.reverseKeyCode or hs.keycodes.map['`'] or 50
     if not hs.accessibilityState() then self.suspended = 'Accessibility permission required'; return self end
     self.overviewOpen = MC.snapshot().present
-    self.tap = hs.eventtap.new({ types.keyDown, types.keyUp, types.flagsChanged }, function(e) return self:_event(e) end):start()
+    self.tap = hs.eventtap.new({ types.keyDown, types.keyUp, types.flagsChanged, types.mouseMoved }, function(e) return self:_event(e) end):start()
     self.running = true
     self.health = hs.timer.doEvery(0.5, function()
         if not self.running then return end
