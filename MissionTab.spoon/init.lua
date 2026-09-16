@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.24', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.25', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -62,8 +62,7 @@ function obj:_highlight(target)
         self.highlightFrame, self.highlightScreen = nil, nil
         return
     end
-    local f = target.frame
-    local frame = { x = f.x + 2, y = f.y + 2, w = math.max(1, f.w - 4), h = math.max(1, f.h - 4) }
+    local frame = target.frame
     local previous = self.highlightFrame
     if previous and previous.x == frame.x and previous.y == frame.y
         and previous.w == frame.w and previous.h == frame.h then return end
