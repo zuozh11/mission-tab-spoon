@@ -79,11 +79,12 @@ end
 
 function obj:_finish(reason)
     self:_highlight()
+    if self.replayTimer then self.replayTimer:stop(); self.replayTimer = nil end
     local resumeQueue = reason == 'committed' or reason == 'native-replay' or (reason == 'cancelled' and self.session.cancelledByUser)
     local run = self.run
-    if run and run.ownsMC then self.overviewOpen = MC.snapshot().present end
-    if not self.overviewOpen then restorePointer(run) end
-    if run and run.restoreFocus and run.original and not self.overviewOpen then
+    local overviewOpen = run and run.ownsMC and MC.snapshot().present
+    if not overviewOpen then restorePointer(run) end
+    if run and run.restoreFocus and run.original and not overviewOpen then
         pcall(function() run.original:focus() end)
     end
     self.lastResult = self.lastResult or {}
@@ -164,8 +165,17 @@ end
 function obj:_tick()
     local s, time = self.session, now()
     if s.mode == 'idle' then return end
-    if s.mode == 'replay' then self:_replay(); return end
     s:advance(time)
+    -- Resolve external overview changes on the worker, never from a stale health cache.
+    local snapshot
+    if not self.run and s.mode ~= 'cancelling' then
+        if s.mode ~= 'pending' or not s.entryChecked then
+            snapshot = MC.snapshot()
+            s.entryChecked = true
+            if snapshot.present then s.mode = 'dismissing' end
+        end
+        if s.mode == 'replay' then self:_replay(); return end
+    end
     if s.mode == 'pending' then return end
     if not self.run then
         local original = hs.window.focusedWindow()
@@ -182,7 +192,7 @@ function obj:_tick()
     end
     local run = self.run
     if s.mode == 'cancelling' then self:_cancel('cancelled'); return end
-    local snapshot = MC.snapshot()
+    snapshot = snapshot or MC.snapshot()
     if snapshot.present and run.ownsMC then run.sawMC = true end
     if run.mouseSelection then
         local target
@@ -203,12 +213,15 @@ function obj:_tick()
     end
     if s.mode == 'opening' then
         if not run.openedAt then
-            if snapshot.present then self:_finish('already-open'); return end
             run.openedAt, run.ownsMC = time, true
             hs.spaces.openMissionControl()
             return
         end
         if time - run.openedAt > self.openTimeout then
+            if snapshot.present and #MC.onScreen(snapshot, run.screenID, run.screenFrame).candidates == 0 then
+                self:_cancel('no-windows')
+                return
+            end
             self.suspended = 'Mission Control did not expose usable windows; call start() to retry'
             self:_cancel('open-timeout')
             return
@@ -342,6 +355,7 @@ function obj:_safeTick()
         self.suspended = 'Runtime error; inspect MissionTab log and call start()'
         -- Stop owning input immediately. Do not guess a click or toggle after an AX error.
         self.run = nil
+        if self.replayTimer then self.replayTimer:stop(); self.replayTimer = nil end
         for _, queued in ipairs(self.queuedSessions) do
             for key in pairs(queued.swallowed) do self.session.swallowed[key] = true end
         end
@@ -407,7 +421,6 @@ function obj:_event(e)
     end
     local previousKeyCount = #(self.session.directions or {})
     local previousSerial = self.session.serial
-    local wasIdle = self.session.mode == 'idle'
     local consumed = self.session:handle(inputKind, key, e:getFlags(),
         e:getProperty(properties.keyboardEventAutorepeat) == 1, now())
     if self.run and self.run.mouseSelection
@@ -429,9 +442,17 @@ function obj:_event(e)
     if self.session.released then self:_highlight() end
     if self.session.serial ~= previousSerial then
         self.lastResult = nil
-        if wasIdle and self.overviewOpen then self.session.mode = 'dismissing' end
     end
-    if self.session.mode == 'replay' then self:_replay(e:getFlags()); return consumed end
+    if self.session.mode == 'replay' and not self.replayTimer then
+        -- Verify the overview outside the input callback, without waiting for the 30 ms worker.
+        local timer
+        timer = hs.timer.doAfter(0, function()
+            if self.replayTimer ~= timer then return end
+            self.replayTimer = nil
+            self:_safeTick()
+        end)
+        self.replayTimer = timer
+    end
     if self.session.mode ~= 'idle' and not self.workTimer then
         local timer
         timer = hs.timer.doEvery(0.03, function()
@@ -450,7 +471,6 @@ function obj:start()
     self.session, self.suspended, self.queuedSessions = Session.new(self.holdDelay), nil, {}
     self.reverseKeyCode = self.reverseKeyCode or hs.keycodes.map['`'] or 50
     if not hs.accessibilityState() then self.suspended = 'Accessibility permission required'; return self end
-    self.overviewOpen = MC.snapshot().present
     self.tap = hs.eventtap.new({ types.keyDown, types.keyUp, types.flagsChanged, types.mouseMoved }, function(e) return self:_event(e) end):start()
     self.running = true
     self.health = hs.timer.doEvery(0.5, function()
@@ -463,8 +483,6 @@ function obj:start()
             if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
             self.tap:start()
         end
-        local ok, snapshot = pcall(MC.snapshot)
-        if ok then self.overviewOpen = snapshot.present end
     end)
     self.screenLayout = screenLayout()
     self.screenWatcher = hs.screen.watcher.new(function()
@@ -486,7 +504,7 @@ function obj:stop()
     self.queuedSessions = {}
     self.restartAfterCleanup = false
     if self.tap then self.tap:stop(); self.tap = nil end
-    for _, key in ipairs({ 'health', 'workTimer', 'screenWatcher', 'sleepWatcher' }) do
+    for _, key in ipairs({ 'health', 'workTimer', 'replayTimer', 'screenWatcher', 'sleepWatcher' }) do
         if self[key] then self[key]:stop(); self[key] = nil end
     end
     local run = self.run

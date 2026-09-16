@@ -21,8 +21,8 @@ local mc=assert(loadfile(root..'MissionTab.spoon/mission_control.lua','t',setmet
 local snap=mc.snapshot()
 check(snap.backend=='WindowManager' and #snap.candidates==2, 'new tree enumerates windows, excludes spaces')
 check(snap.candidates[1].id~=snap.candidates[2].id, 'same app and title remain distinct by wid')
-local ordered,initial=mc.order(snap.candidates,{10,20},10)
-check(ordered[initial].id==20, 'recent other window chooses initial selection')
+local ordered,initial=mc.order(snap.candidates)
+check(ordered[initial].id==10, 'spatial order starts at upper-left; controller owns MRU selection')
 check(mc.stable(snap,mc.snapshot()), 'unchanged geometry is ready')
 b.AXFrame={x=250,y=10,w=50,h=50}
 check(not mc.stable(snap,mc.snapshot()), 'animation geometry must settle')
@@ -49,13 +49,13 @@ local ring={}
 for i,xy in ipairs({{0,-100},{100,0},{0,100},{-100,0}}) do
     ring[i]={id=i,frame={x=xy[1]-5,y=xy[2]-5,w=10,h=10}}
 end
-local sorted,start=mc.order({ring[3],ring[1],ring[4],ring[2]},{1,4,2,3},1)
+local sorted,start=mc.order({ring[3],ring[1],ring[4],ring[2]})
 for i=1,4 do check(sorted[i].id==i, 'clockwise order is top/right/bottom/left') end
-check(sorted[start].id==4, 'recent window is independent of clockwise order')
-check(sorted[(start % #sorted)+1].id==1, 'Tab wraps clockwise from recent window')
-check(sorted[((start-2) % #sorted)+1].id==3, 'reverse wraps counterclockwise')
-local single,index=mc.order({ring[1]},{1},1)
+check(sorted[start].id==1, 'circular order starts at the upper-left nearest group')
+check(sorted[(start % #sorted)+1].id==2, 'Tab advances clockwise')
+check(sorted[((start-2) % #sorted)+1].id==4, 'reverse wraps counterclockwise from first item')
+local single,index=mc.order({ring[1]})
 check(index==1 and single[index].id==1, 'one-window layout remains selectable')
-local empty,index=mc.order({}, {}, nil)
+local empty,index=mc.order({})
 check(#empty==0 and index==nil, 'empty layout has no starting window')
 return {passed=true,assertions=count}

@@ -28,14 +28,15 @@ local function fixture(holdDelay)
         return e
     end
     local hs = {
-        timer={absoluteTime=function() return f.time*1e9 end, doEvery=function(_,fn) return watcher(fn):start() end},
+        timer={absoluteTime=function() return f.time*1e9 end, doEvery=function(_,fn) return watcher(fn):start() end,
+            doAfter=function(_,fn) return watcher(fn):start() end},
         logger={new=function() return {w=function() end,e=function(err) error(err) end} end},
         inspect=tostring, keycodes={map={tab=48,escape=53,['`']=50}},
         accessibilityState=function() return true end,
         mouse={getCurrentScreen=function() return {id=function() return 1 end,
             fullFrame=function() return {x=0,y=0,w=1000,h=1000} end} end, absolutePosition=function(p) if p then f.pointer=p end; return f.pointer end},
         window={get=win,focusedWindow=function() return win(f.focused) end,orderedWindows=function() return {win(1),win(2),win(3)} end},
-        spaces={openMissionControl=function() f.present=true end,toggleMissionControl=function()
+        spaces={openMissionControl=function() f.present=not f.noOpen end,toggleMissionControl=function()
             f.toggles=f.toggles+1
             if not f.stuck then f.present=not f.present; f.focused=f.hoverID or f.focused end
         end},
@@ -89,7 +90,11 @@ local function fixture(holdDelay)
     f.spoon:start()
     function f.input(kind,key,flags,tag)
         local e=newEvent(kind,key,flags); if tag then e.props.tag=tag end
-        return f.spoon:_event(e)
+        f.modifiers=flags
+        local consumed=f.spoon:_event(e)
+        local replay=f.spoon.replayTimer
+        if replay and not f.deferReplay then replay.callback() end
+        return consumed
     end
     function f.move(point)
         local e=newEvent(4); e.point=point; e.props.dx=10
@@ -293,8 +298,8 @@ f=fixture(); f.begin(); f.ready(); f.removed=2; f.input(3,55,{}); f.tick(0.9); f
 check(f.spoon:status().lastResult.reason=='target-disappeared' and f.focused==1, 'missing target cancels and restores original')
 f=fixture(); f.begin(); f.ready(); f.input(1,53,{cmd=true}); f.tick(0.6); f.input(3,55,{}); f.tick(0.8); f.tick(1)
 check(f.focused==1 and f.spoon:status().state=='idle', 'Esc cancels without later release committing')
-f=fixture(); f.empty=true; f.begin(); f.tick(2); f.tick(2.2); f.tick(2.4)
-check(f.spoon:status().suspended and f.spoon:status().state=='idle', 'unknown structure cancels and suspends')
+f=fixture(); f.noOpen=true; f.begin(); f.tick(2); f.tick(2.2); f.tick(2.4)
+check(f.spoon:status().suspended and f.spoon:status().state=='idle', 'overview that never appears cancels and suspends')
 check(not f.input(1,48,{cmd=true}), 'suspended plugin preserves native shortcut')
 f=fixture(); f.begin(); f.ready(); f.stuck=true; f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(3)
 check(f.spoon:status().suspended and f.toggles==1, 'close timeout never blindly toggles twice')
@@ -331,4 +336,32 @@ check(f.focused==3, 'Tab advances spatially clockwise from the recent initial wi
 f=fixture(); f.input(1,48,{cmd=true}); f.input(2,48,{cmd=true}); f.input(1,48,{cmd=true}); f.input(2,48,{cmd=true})
 f.tick(0.03); f.tick(0.2); f.ready(); f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(1.4); f.tick(1.6)
 check(f.focused==3, 'queued Tab advances once after recent initial selection')
+
+local opened=fixture(0.18); opened.present=true
+opened.input(1,48,{cmd=true}); opened.input(2,48,{cmd=true}); opened.tick(0.03)
+check(opened.toggles==1 and not opened.present, 'manual overview opens are dismissed without a health refresh')
+local closed=fixture(0.18); closed.present=true; closed.spoon.health.callback(); closed.present=false
+closed.input(1,48,{cmd=true}); closed.input(2,48,{cmd=true}); closed.input(3,55,{})
+check(#closed.posted==4 and closed.spoon:status().lastResult.reason=='native-replay',
+    'manual overview closes do not swallow a short switch')
+local openedDuringHold=fixture(0.18)
+openedDuringHold.input(1,48,{cmd=true}); openedDuringHold.input(2,48,{cmd=true}); openedDuringHold.tick(0.03)
+openedDuringHold.present=true; openedDuringHold.tick(0.2)
+check(openedDuringHold.toggles==1 and not openedDuringHold.present, 'overview opened during hold is dismissed')
+local shortOpen=fixture(0.18); shortOpen.present=true
+shortOpen.input(1,48,{cmd=true}); shortOpen.input(3,55,{})
+check(shortOpen.toggles==1 and #shortOpen.posted==0, 'short switch dismisses an already open overview without native replay')
+local deferred=fixture(0.18); deferred.deferReplay=true
+deferred.input(1,48,{cmd=true}); deferred.input(3,55,{})
+local callback=deferred.spoon.replayTimer.callback
+check(#deferred.posted==0, 'replay checks run outside the event callback')
+deferred.spoon:stop(); callback()
+check(#deferred.posted==0, 'stop invalidates deferred replay')
+
+local empty=fixture(); empty.empty=true; empty.begin(); empty.tick(2); empty.tick(2.1)
+check(not empty.spoon:status().suspended and empty.spoon:status().lastResult.reason=='no-windows',
+    'empty overview ends only the current gesture without suspending the plugin')
+empty.empty=false; empty.time=3; empty.input(1,48,{cmd=true}); empty.input(2,48,{cmd=true})
+empty.tick(3.03); empty.tick(3.06); empty.input(3,55,{}); empty.tick(3.09); empty.tick(3.12)
+check(empty.spoon:status().lastResult.matched, 'next gesture works when windows become available')
 return {passed=true,assertions=count}

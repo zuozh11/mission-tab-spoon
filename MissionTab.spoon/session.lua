@@ -8,6 +8,7 @@ end
 
 function Session:reset()
     self.mode = 'idle'
+    self.entryChecked = nil
     self.tabDown = false
     self.cmd = false
     self.steps = 0
