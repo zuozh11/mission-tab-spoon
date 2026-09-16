@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.4', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.5', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -196,6 +196,13 @@ function obj:_tick()
             if not run.cancelReason then
                 local focused = hs.window.focusedWindow()
                 local actual = focused and focused:id()
+                if focused then
+                    local frame = focused:frame()
+                    if frame and frame.w > 0 and frame.h > 0 then
+                        hs.mouse.absolutePosition({ x = frame.x + frame.w / 2, y = frame.y + frame.h / 2 })
+                        run.pointerMoved = false -- Keep the final window centre on completion.
+                    end
+                end
                 self.lastResult = { target = run.target and run.target.id, actual = actual,
                     matched = run.target and run.target.id ~= nil and run.target.id == actual,
                     elapsed = time - s.started }
