@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.3', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.4', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -9,17 +9,22 @@ local types, properties = event.types, event.properties
 local marker = 0x4D544142
 local function now() return hs.timer.absoluteTime() / 1e9 end
 local function tagged(e) return e:setProperty(properties.eventSourceUserData, marker) end
-local function frameChanged(a, b)
-    if not a then return true end
-    for _, key in ipairs({ 'x', 'y', 'w', 'h' }) do
-        if math.abs(a[key] - b[key]) > 2 then return true end
+local function hoverChanged(run, target, snapshot)
+    local point = MC.point(snapshot, target)
+    return not point or not run.lastPointer
+        or math.abs(point.x - run.lastPointer.x) + math.abs(point.y - run.lastPointer.y) > 2
+end
+
+local function restorePointer(run)
+    if run and run.pointerMoved and not run.userPointer then
+        hs.mouse.absolutePosition(run.pointer)
+        run.pointerMoved = false
     end
-    return false
 end
 
 obj.holdDelay = 0.18
 obj.openTimeout = 1.5
-obj.hoverDelay = 0.25 -- Legacy option name: minimum selection preview time, no mouse hover.
+obj.hoverDelay = 0.25
 obj.closeTimeout = 1.5
 obj.log = hs.logger.new('MissionTab', 'info')
 
@@ -40,9 +45,9 @@ function obj:diagnose()
 end
 
 function obj:_finish(reason)
-    self:_hidePreview()
     local run = self.run
     if run and run.ownsMC then self.overviewOpen = MC.snapshot().present end
+    if not self.overviewOpen then restorePointer(run) end
     if run and run.restoreFocus and run.original and not self.overviewOpen then
         pcall(function() run.original:focus() end)
     end
@@ -54,7 +59,6 @@ function obj:_finish(reason)
 end
 
 function obj:_cancel(reason)
-    self:_hidePreview()
     local run = self.run
     if not run or not run.ownsMC then self:_finish(reason); return end
     if not MC.snapshot().present then
@@ -77,24 +81,13 @@ function obj:_cancel(reason)
     self.session.mode = 'closing'
 end
 
-function obj:_hidePreview()
-    if self.preview then self.preview:delete(); self.preview = nil end
-end
-
-function obj:_preview(target, time)
-    self:_hidePreview()
-    local frame = target.frame
-    self.preview = hs.canvas.new(frame)
-        :behavior({ 'canJoinAllSpaces', 'stationary' })
-        :level(hs.canvas.windowLevels.screenSaver):clickActivating(false)
-    -- No mouse callback: the overlay is click-through and never owns input.
-    self.preview:appendElements({
-        type = 'rectangle', action = 'stroke', strokeWidth = 5,
-        strokeColor = { red = 0, green = 0.9, blue = 1, alpha = 1 },
-        frame = { x = 3, y = 3, w = math.max(1, frame.w - 6), h = math.max(1, frame.h - 6) },
-    }):show()
-    self.run.previewFrame = { x = frame.x, y = frame.y, w = frame.w, h = frame.h }
-    self.run.previewedAt = time
+function obj:_hover(target, time, snapshot)
+    local point = MC.point(snapshot, target)
+    if not point then self:_cancel('target-occluded'); return false end
+    self.run.pointerMoved, self.run.lastPointer = true, point
+    hs.mouse.absolutePosition(point)
+    tagged(event.newMouseEvent(types.mouseMoved, point):setFlags({})):post()
+    self.run.hoveredAt = time
     return true
 end
 
@@ -174,9 +167,9 @@ function obj:_tick()
             local index = ((base - 1 + offset) % #candidates) + 1
             local target = candidates[index]
             if not run.target or run.target.id ~= target.id
-                or frameChanged(run.previewFrame, target.frame) then
+                or hoverChanged(run, target, snapshot) then
                 run.index, run.target = index, target
-                if not self:_preview(target, time) then return end
+                if not self:_hover(target, time, snapshot) then return end
             end
         end
         if MC.stable(run.previous, scoped) then
@@ -190,7 +183,6 @@ function obj:_tick()
     end
     if s.mode == 'closing' then
         if not snapshot.present then
-            self:_hidePreview()
             if run.focusTarget and not run.focusApplied then
                 run.focusApplied = true
                 if not run.focusTarget:id() then self:_finish('target-disappeared'); return end
@@ -236,23 +228,22 @@ function obj:_tick()
         local index = ((run.base - 1 + offset) % #run.candidates) + 1
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.candidates[index])
         if not target then self:_cancel('target-disappeared'); return end
-        if run.index ~= index or frameChanged(run.previewFrame, target.frame) then
+        if run.index ~= index or hoverChanged(run, target, snapshot) then
             run.index, run.target = index, target
-            if not self:_preview(target, time) then return end
+            if not self:_hover(target, time, snapshot) then return end
         end
         if s.released then s.mode = 'committing' end
     end
     if s.mode == 'committing' then
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.target)
         if not target then self:_cancel('target-disappeared'); return end
-        if frameChanged(run.previewFrame, target.frame) then
+        if hoverChanged(run, target, snapshot) then
             run.target = target
-            if not self:_preview(target, time) then return end
+            if not self:_hover(target, time, snapshot) then return end
         end
-        if time - run.previewedAt < self.hoverDelay then return end
+        if time - run.hoveredAt < self.hoverDelay then return end
         run.focusTarget = target.id and hs.window.get(target.id)
         if not run.focusTarget then self:_cancel('target-unavailable'); return end
-        self:_hidePreview()
         hs.spaces.toggleMissionControl()
         run.closing, s.mode = time, 'closing'
     end
@@ -261,7 +252,7 @@ end
 function obj:_safeTick()
     local ok, err = xpcall(function() self:_tick() end, debug.traceback)
     if not ok then
-        self:_hidePreview()
+        restorePointer(self.run)
         self.log.e(err)
         self.suspended = 'Runtime error; inspect MissionTab log and call start()'
         -- Stop owning input immediately. Do not guess a click or toggle after an AX error.
@@ -278,10 +269,12 @@ function obj:_event(e)
         local run, mode = self.run, self.session.mode
         local motion = math.abs(e:getProperty(properties.mouseEventDeltaX))
             + math.abs(e:getProperty(properties.mouseEventDeltaY))
+        local point = e:location()
         if run and run.ownsMC and motion > 0
+            and (not run.lastPointer
+                or math.abs(point.x - run.lastPointer.x) + math.abs(point.y - run.lastPointer.y) > 3)
             and (mode == 'opening' or mode == 'navigating' or mode == 'committing') then
-            run.mouseSelection = true
-            self:_hidePreview()
+            run.mouseSelection, run.userPointer = true, true
         end
         return false
     end
@@ -311,7 +304,7 @@ function obj:_event(e)
             local run = self.run
             run.screenID, run.screenFrame = screen:id(), screen:fullFrame()
             run.pointer, run.stepOrigin = hs.mouse.absolutePosition(), self.session.steps
-            run.recent = nil
+            run.recent, run.userPointer, run.pointerMoved, run.lastPointer = nil, false, false, nil
             run.mouseSelection, run.index, run.target, run.previous = false, nil, nil, nil
             run.openedAt = now()
             self.session.mode = 'opening'
@@ -367,7 +360,6 @@ function obj:start()
 end
 
 function obj:stop()
-    self:_hidePreview()
     self.restartAfterCleanup = false
     if self.tap then self.tap:stop(); self.tap = nil end
     for _, key in ipairs({ 'health', 'workTimer', 'screenWatcher', 'sleepWatcher' }) do
@@ -394,10 +386,12 @@ function obj:stop()
             elseif valid and (seen or now() >= openDeadline) then
                 goneAt = goneAt or now()
                 if now() - goneAt < 0.15 then return end
+                restorePointer(run)
                 if run.original then pcall(function() run.original:focus() end) end
                 self.cleanup:stop(); self.cleanup = nil
             end
             if self.cleanup and now() > deadline then
+                restorePointer(run)
                 self.cleanup:stop(); self.cleanup = nil
             end
             if not self.cleanup and self.restartAfterCleanup then
