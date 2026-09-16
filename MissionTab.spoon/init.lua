@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.1.4', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.0', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -9,11 +9,17 @@ local types, properties = event.types, event.properties
 local marker = 0x4D544142
 local function now() return hs.timer.absoluteTime() / 1e9 end
 local function tagged(e) return e:setProperty(properties.eventSourceUserData, marker) end
-local function distance(a, b) return math.abs(a.x - b.x) + math.abs(a.y - b.y) end
+local function frameChanged(a, b)
+    if not a then return true end
+    for _, key in ipairs({ 'x', 'y', 'w', 'h' }) do
+        if math.abs(a[key] - b[key]) > 2 then return true end
+    end
+    return false
+end
 
 obj.holdDelay = 0.18
 obj.openTimeout = 1.5
-obj.hoverDelay = 0.25
+obj.hoverDelay = 0.25 -- Legacy option name: minimum selection preview time, no mouse hover.
 obj.closeTimeout = 1.5
 obj.log = hs.logger.new('MissionTab', 'info')
 
@@ -34,12 +40,9 @@ function obj:diagnose()
 end
 
 function obj:_finish(reason)
+    self:_hidePreview()
     local run = self.run
     if run and run.ownsMC then self.overviewOpen = MC.snapshot().present end
-    if run and run.pointerMoved and not run.userPointer and run.pointer
-        and not self.overviewOpen then
-        hs.mouse.absolutePosition(run.pointer)
-    end
     if run and run.restoreFocus and run.original and not self.overviewOpen then
         pcall(function() run.original:focus() end)
     end
@@ -51,6 +54,7 @@ function obj:_finish(reason)
 end
 
 function obj:_cancel(reason)
+    self:_hidePreview()
     local run = self.run
     if not run or not run.ownsMC then self:_finish(reason); return end
     if not MC.snapshot().present then
@@ -73,13 +77,24 @@ function obj:_cancel(reason)
     self.session.mode = 'closing'
 end
 
-function obj:_hover(target, time, snapshot)
-    local point = MC.point(snapshot, target)
-    if not point then self:_cancel('target-occluded'); return false end
-    self.run.pointerMoved, self.run.lastPointer = true, point
-    hs.mouse.absolutePosition(point)
-    tagged(event.newMouseEvent(types.mouseMoved, point):setFlags({})):post()
-    self.run.hoveredAt = time
+function obj:_hidePreview()
+    if self.preview then self.preview:delete(); self.preview = nil end
+end
+
+function obj:_preview(target, time)
+    self:_hidePreview()
+    local frame = target.frame
+    self.preview = hs.canvas.new(frame)
+        :behavior({ 'canJoinAllSpaces', 'stationary' })
+        :level(hs.canvas.windowLevels.screenSaver):clickActivating(false)
+    -- No mouse callback: the overlay is click-through and never owns input.
+    self.preview:appendElements({
+        type = 'rectangle', action = 'stroke', strokeWidth = 5,
+        strokeColor = { red = 0, green = 0.9, blue = 1, alpha = 1 },
+        frame = { x = 3, y = 3, w = math.max(1, frame.w - 6), h = math.max(1, frame.h - 6) },
+    }):show()
+    self.run.previewFrame = { x = frame.x, y = frame.y, w = frame.w, h = frame.h }
+    self.run.previewedAt = time
     return true
 end
 
@@ -106,7 +121,7 @@ function obj:_tick()
         local ordered = {}
         for _, window in ipairs(hs.window.orderedWindows()) do ordered[#ordered + 1] = window:id() end
         self.run = { original = original, originalID = original and original:id(), order = ordered,
-            pointer = hs.mouse.absolutePosition(), serial = s.serial }
+            serial = s.serial }
         self.lastResult = nil
     end
     local run = self.run
@@ -137,18 +152,14 @@ function obj:_tick()
         -- Preview as soon as AX exposes a usable frame; keep following it during animation.
         -- Stabilization only freezes the clockwise order and permits confirmation.
         local candidates, base = MC.order(snapshot.candidates, run.order, run.originalID)
-        if run.mouseSelection and #s.directions ~= run.mouseKeyCount then
-            run.mouseSelection, run.index = false, nil
-        end
-        if base and not run.mouseSelection then
+        if base then
             local offset = s.steps - s.directions[1]
             local index = ((base - 1 + offset) % #candidates) + 1
             local target = candidates[index]
-            local point = MC.point(snapshot, target)
-            if point and (not run.target or run.target.element ~= target.element
-                or not run.lastPointer or distance(run.lastPointer, point) > 2) then
+            if not run.target or run.target.id ~= target.id
+                or frameChanged(run.previewFrame, target.frame) then
                 run.index, run.target = index, target
-                if not self:_hover(target, time, snapshot) then return end
+                if not self:_preview(target, time) then return end
             end
         end
         if MC.stable(run.previous, snapshot) then
@@ -162,6 +173,14 @@ function obj:_tick()
     end
     if s.mode == 'closing' then
         if not snapshot.present then
+            self:_hidePreview()
+            if run.focusTarget and not run.focusApplied then
+                run.focusApplied = true
+                if not run.focusTarget:id() then self:_finish('target-disappeared'); return end
+                run.focusTarget:focus()
+                run.goneAt = now()
+                return
+            end
             -- Let focus settle after the AX overview disappears.
             run.goneAt = run.goneAt or time
             if time - run.goneAt < 0.15 then return end
@@ -186,44 +205,29 @@ function obj:_tick()
     if snapshot.backend ~= run.backend or snapshot.pid ~= run.pid then
         self:_cancel('overview-replaced'); return
     end
-    if run.mouseSelection then
-        if #s.directions ~= run.mouseKeyCount then
-            -- A new navigation key returns control to the frozen keyboard order.
-            run.mouseSelection, run.index = false, nil
-            s.mode = 'navigating'
-        else
-            if s.released then
-                run.target = nil -- The system chooses the window under the real pointer.
-                hs.spaces.toggleMissionControl()
-                run.closing, s.mode = time, 'closing'
-            end
-            return
-        end
-    end
     if s.mode == 'navigating' then
         -- The first Tab opens at the recent window. Only later keys move around the layout.
         local offset = s.steps - s.directions[1]
         local index = ((run.base - 1 + offset) % #run.candidates) + 1
         local target = MC.find(snapshot, run.candidates[index])
         if not target then self:_cancel('target-disappeared'); return end
-        local point = MC.point(snapshot, target)
-        if not point then self:_cancel('target-occluded'); return end
-        if run.index ~= index or not run.lastPointer or distance(run.lastPointer, point) > 2 then
+        if run.index ~= index or frameChanged(run.previewFrame, target.frame) then
             run.index, run.target = index, target
-            if not self:_hover(target, time, snapshot) then return end
+            if not self:_preview(target, time) then return end
         end
         if s.released then s.mode = 'committing' end
     end
     if s.mode == 'committing' then
         local target = MC.find(snapshot, run.target)
         if not target then self:_cancel('target-disappeared'); return end
-        local point = MC.point(snapshot, target)
-        if not point then self:_cancel('target-occluded'); return end
-        if distance(point, run.lastPointer) > 2 then
+        if frameChanged(run.previewFrame, target.frame) then
             run.target = target
-            if not self:_hover(target, time, snapshot) then return end
+            if not self:_preview(target, time) then return end
         end
-        if time - run.hoveredAt < self.hoverDelay then return end
+        if time - run.previewedAt < self.hoverDelay then return end
+        run.focusTarget = target.id and hs.window.get(target.id)
+        if not run.focusTarget then self:_cancel('target-unavailable'); return end
+        self:_hidePreview()
         hs.spaces.toggleMissionControl()
         run.closing, s.mode = time, 'closing'
     end
@@ -232,6 +236,7 @@ end
 function obj:_safeTick()
     local ok, err = xpcall(function() self:_tick() end, debug.traceback)
     if not ok then
+        self:_hidePreview()
         self.log.e(err)
         self.suspended = 'Runtime error; inspect MissionTab log and call start()'
         -- Stop owning input immediately. Do not guess a click or toggle after an AX error.
@@ -244,22 +249,6 @@ end
 function obj:_event(e)
     if e:getProperty(properties.eventSourceUserData) == marker then return false end
     local kind = e:getType()
-    if kind == types.mouseMoved or kind == types.leftMouseDown or kind == types.rightMouseDown then
-        if self.run and self.run.ownsMC then
-            -- Mouse movement changes the selection source, not Command's ownership.
-            local motion = math.abs(e:getProperty(properties.mouseEventDeltaX))
-                + math.abs(e:getProperty(properties.mouseEventDeltaY))
-            local active = self.session.mode == 'opening' or self.session.mode == 'navigating'
-                or self.session.mode == 'committing'
-            if active and (kind ~= types.mouseMoved or (motion > 0 and (not self.run.lastPointer
-                or distance(e:location(), self.run.lastPointer) > 3))) then
-                self.run.userPointer = true
-                self.run.mouseSelection = true
-                self.run.mouseKeyCount = #self.session.directions
-            end
-        end
-        return false
-    end
     local keyCode = e:getKeyCode()
     local key = keyCode == hs.keycodes.map.tab and 'tab'
         or keyCode == self.reverseKeyCode and 'grave'
@@ -300,8 +289,7 @@ function obj:start()
     self.reverseKeyCode = self.reverseKeyCode or hs.keycodes.map['`'] or 50
     if not hs.accessibilityState() then self.suspended = 'Accessibility permission required'; return self end
     self.overviewOpen = MC.snapshot().present
-    self.tap = hs.eventtap.new({ types.keyDown, types.keyUp, types.flagsChanged,
-        types.mouseMoved, types.leftMouseDown, types.rightMouseDown }, function(e) return self:_event(e) end):start()
+    self.tap = hs.eventtap.new({ types.keyDown, types.keyUp, types.flagsChanged }, function(e) return self:_event(e) end):start()
     self.running = true
     self.health = hs.timer.doEvery(0.5, function()
         if not self.running then return end
@@ -328,6 +316,7 @@ function obj:start()
 end
 
 function obj:stop()
+    self:_hidePreview()
     self.restartAfterCleanup = false
     if self.tap then self.tap:stop(); self.tap = nil end
     for _, key in ipairs({ 'health', 'workTimer', 'screenWatcher', 'sleepWatcher' }) do
@@ -354,7 +343,6 @@ function obj:stop()
             elseif valid and (seen or now() >= openDeadline) then
                 goneAt = goneAt or now()
                 if now() - goneAt < 0.15 then return end
-                if run.pointerMoved and not run.userPointer then hs.mouse.absolutePosition(run.pointer) end
                 if run.original then pcall(function() run.original:focus() end) end
                 self.cleanup:stop(); self.cleanup = nil
             end

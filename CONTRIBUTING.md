@@ -18,7 +18,7 @@
 
 ```text
 MissionTab.spoon/
-  init.lua             输入监听、鼠标定位、异步流程与生命周期
+  init.lua             键盘监听、选中框、按 ID 聚焦与生命周期
   session.lua          不依赖 Hammerspoon 的键盘状态机
   mission_control.lua  AX 窗口枚举、分组排序与可见区域计算
 scripts/
