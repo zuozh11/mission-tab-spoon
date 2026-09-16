@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.2', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.3', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -120,7 +120,11 @@ function obj:_tick()
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self:_finish('pointer-screen-unavailable'); return end
-        self.run = { original = original, serial = s.serial,
+        local recent = {}
+        for _, window in ipairs(hs.window.orderedWindows()) do
+            if not original or window:id() ~= original:id() then recent[#recent + 1] = window:id() end
+        end
+        self.run = { original = original, recent = recent, serial = s.serial,
             screenID = screen:id(), screenFrame = screen:fullFrame(),
             pointer = hs.mouse.absolutePosition(), stepOrigin = s.directions[1] }
         self.lastResult = nil
@@ -154,7 +158,17 @@ function obj:_tick()
         -- Stabilization only freezes the clockwise order and permits confirmation.
         local scoped = MC.onScreen(snapshot, run.screenID, run.screenFrame)
         local candidates, base = MC.order(scoped.candidates)
-        if base then base = MC.pointerIndex(scoped, candidates, run.pointer) end
+        if base then
+            if run.recent then
+                local found
+                for _, id in ipairs(run.recent) do
+                    for i, candidate in ipairs(candidates) do
+                        if candidate.id == id then base, found = i, true; break end
+                    end
+                    if found then break end
+                end
+            else base = MC.pointerIndex(scoped, candidates, run.pointer) end
+        end
         if base and not run.mouseSelection then
             local offset = s.steps - run.stepOrigin
             local index = ((base - 1 + offset) % #candidates) + 1
@@ -297,6 +311,7 @@ function obj:_event(e)
             local run = self.run
             run.screenID, run.screenFrame = screen:id(), screen:fullFrame()
             run.pointer, run.stepOrigin = hs.mouse.absolutePosition(), self.session.steps
+            run.recent = nil
             run.mouseSelection, run.index, run.target, run.previous = false, nil, nil, nil
             run.openedAt = now()
             self.session.mode = 'opening'
