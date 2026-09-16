@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.9', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.10', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -180,6 +180,9 @@ function obj:_tick()
         if MC.stable(run.previous, scoped) then
             run.candidates, run.base = candidates, base
             run.backend, run.pid = snapshot.backend, snapshot.pid
+            -- AX frames can settle before native hover tracking is ready.
+            -- Refresh once after settling, even if the pointer has not moved.
+            run.hoverRefreshAt = time + self.hoverDelay
             s.mode = 'navigating'
         else
             run.previous = scoped
@@ -240,19 +243,24 @@ function obj:_tick()
         local index = ((run.base - 1 + offset) % #run.candidates) + 1
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.candidates[index])
         if not target then self:_cancel('target-disappeared'); return end
-        if run.index ~= index or hoverChanged(run, target, snapshot) then
+        if run.index ~= index or hoverChanged(run, target, snapshot)
+            or (run.hoverRefreshAt and time >= run.hoverRefreshAt) then
             run.index, run.target = index, target
             if not self:_hover(target, time, snapshot) then return end
+            if run.hoverRefreshAt and time >= run.hoverRefreshAt then run.hoverRefreshAt = nil end
         end
         if s.released then s.mode = 'committing' end
     end
     if s.mode == 'committing' then
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.target)
         if not target then self:_cancel('target-disappeared'); return end
-        if hoverChanged(run, target, snapshot) then
+        if hoverChanged(run, target, snapshot)
+            or (run.hoverRefreshAt and time >= run.hoverRefreshAt) then
             run.target = target
             if not self:_hover(target, time, snapshot) then return end
+            if run.hoverRefreshAt and time >= run.hoverRefreshAt then run.hoverRefreshAt = nil end
         end
+        if run.hoverRefreshAt then return end
         if time - run.hoveredAt < self.hoverDelay then return end
         run.focusTarget = target.id and hs.window.get(target.id)
         if not run.focusTarget then self:_cancel('target-unavailable'); return end
