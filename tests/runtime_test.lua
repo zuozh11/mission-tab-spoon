@@ -35,7 +35,7 @@ local function fixture(holdDelay)
         inspect=tostring, keycodes={map={tab=48,escape=53,['`']=50}},
         accessibilityState=function() return true end,
         mouse={getCurrentScreen=function() return {id=function() return 1 end,
-            fullFrame=function() return {x=0,y=0,w=1000,h=1000} end} end, absolutePosition=function(p) if p then f.pointer=p end; return f.pointer end},
+            fullFrame=function() return f.screenFrame or {x=0,y=0,w=1000,h=1000} end} end, absolutePosition=function(p) if p then f.pointer=p end; return f.pointer end},
         window={get=win,focusedWindow=function() return win(f.focused) end,orderedWindows=function() return {win(1),win(2),win(3)} end},
         spaces={openMissionControl=function() f.present=not f.noOpen end,toggleMissionControl=function()
             f.toggles=f.toggles+1
@@ -67,6 +67,7 @@ local function fixture(holdDelay)
         function canvas:canvasMouseEvents(...) self.mouseEvents={...}; return self end
         function canvas:mouseCallback(value) self.callback=value; return self end
         function canvas:appendElements(value) self.element=value; return self end
+        function canvas:elementAttribute(_, key, value) self.element[key]=value; return self end
         function canvas:frame(value) self.frameUpdates=self.frameUpdates+1; self.bounds=value; return self end
         function canvas:show() self.shows=self.shows+1; self.visible=true; return self end
         function canvas:delete() self.deleted=true; self.visible=false end
@@ -115,6 +116,40 @@ local function fixture(holdDelay)
     function f.ready() f.tick(0.5); f.tick(0.54) end
     return f
 end
+local reverseMask=fixture(); reverseMask.begin(); reverseMask.ready()
+local originalCanvas=reverseMask.canvas
+for _,id in ipairs({1,3,2,1}) do
+    reverseMask.input(1,50,{cmd=true}); reverseMask.input(2,50,{cmd=true}); reverseMask.tick(reverseMask.time+0.03)
+    check(reverseMask.spoon.run.target.id==id and reverseMask.canvas.element.frame.x==id*100+2,
+        'reverse selection and drawn mask point to the same window')
+    check(reverseMask.canvas==originalCanvas and reverseMask.canvas.frameUpdates==0,
+        'reverse navigation never moves or resizes the visible native overlay')
+end
+local movingEntry=fixture(); movingEntry.motion=true; movingEntry.begin()
+movingEntry.tick(0.5); movingEntry.tick(2)
+check(movingEntry.present and movingEntry.toggles==0 and not movingEntry.spoon.suspended,
+    'visible moving entry must not automatically close at the stabilization deadline')
+local restartedTap=fixture(); restartedTap.begin(); restartedTap.ready()
+restartedTap.spoon.tap:stop(); restartedTap.spoon.health.callback(); restartedTap.tick(0.6)
+check(restartedTap.present and restartedTap.toggles==0 and restartedTap.spoon.tap:isEnabled(),
+    'recovering a disabled event tap while Command is held preserves the overview')
+local missedRelease=fixture(); missedRelease.begin(); missedRelease.ready()
+missedRelease.spoon.tap:stop(); missedRelease.modifiers={}
+missedRelease.spoon.health.callback(); missedRelease.tick(0.6); missedRelease.tick(0.7)
+check(missedRelease.spoon:status().lastResult.reason=='committed',
+    'tap recovery confirms when Command was actually released while the tap was disabled')
+movingEntry.input(1,50,{cmd=true}); movingEntry.input(2,50,{cmd=true}); movingEntry.tick(2.03)
+check(movingEntry.spoon.run.target.id==1 and movingEntry.present,
+    'reverse navigation still works after freezing a moving entry layout at its deadline')
+movingEntry.input(3,55,{}); movingEntry.tick(2.06); movingEntry.tick(2.1)
+check(movingEntry.spoon:status().lastResult.matched,
+    'moving layout still confirms the selected window after the stabilization deadline')
+local offsetScreen=fixture(); offsetScreen.screenFrame={x=-500,y=-100,w=1000,h=1000}
+offsetScreen.spoon:_highlight({frame={x=-450,y=-50,w=200,h=100}})
+check(offsetScreen.canvas.bounds.x==-500 and offsetScreen.canvas.element.frame.x==52
+    and offsetScreen.canvas.element.frame.y==52,
+    'mask drawing uses local screen coordinates on displays with negative origins')
+offsetScreen.spoon:stop()
 local native=fixture(0.18)
 for _, duringEntry in ipairs({true, false}) do
     local overlap=fixture()
@@ -167,12 +202,12 @@ check(#reverse.posted==6 and reverse.posted[3].flags[2]=='shift' and reverse.pos
     'reverse short replay preserves direction and remaining physical Shift')
 local mask=fixture(); mask.motion=true; mask.begin()
 local canvas=mask.canvas
-check(canvas and canvas.visible and canvas.bounds.x==222 and canvas.element.fillColor.alpha==0.20,
+check(canvas and canvas.visible and canvas.element.frame.x==222 and canvas.element.fillColor.alpha==0.20,
     'selected thumbnail gets an inset translucent highlight during entry')
 check(not canvas.activates and not canvas.callback and not canvas.mouseEvents[1],
     'highlight does not activate Hammerspoon or capture native pointer input')
 mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.3)
-check(mask.canvas==canvas and canvas.bounds.x==332, 'one canvas follows selection and moving entry geometry')
+check(mask.canvas==canvas and canvas.element.frame.x==332, 'one canvas follows selection and moving entry geometry')
 mask.move({x=800,y=800}); mask.tick(0.32)
 check(canvas.deleted and not mask.spoon.highlight, 'moving into blank space removes the highlight')
 mask.input(1,48,{cmd=true}); mask.input(2,48,{cmd=true}); mask.tick(0.4)
@@ -188,12 +223,12 @@ check(cancelCanvas.deleted, 'Escape cleanup removes the highlight')
 local mouseMask=fixture(); mouseMask.begin(); mouseMask.ready()
 local postedBeforeMouse=#mouseMask.posted
 mouseMask.move({x=325,y=25}); mouseMask.tick(0.6)
-check(mouseMask.spoon.highlight and mouseMask.canvas.bounds.x==302,
+check(mouseMask.spoon.highlight and mouseMask.canvas.element.frame.x==302,
     'mouse takeover highlights the hovered thumbnail')
 check(mouseMask.pointer.x==325 and #mouseMask.posted==postedBeforeMouse,
     'mouse highlight does not warp pointer or synthesize hover events')
 mouseMask.move({x=125,y=25}); mouseMask.tick(0.63)
-check(mouseMask.canvas.bounds.x==102, 'mouse highlight follows a different thumbnail')
+check(mouseMask.canvas.element.frame.x==102, 'mouse highlight follows a different thumbnail')
 mouseMask.move({x=800,y=800}); mouseMask.tick(0.66)
 check(not mouseMask.spoon.highlight, 'blank space hides highlight instead of selecting nearest thumbnail')
 mouseMask.move({x=225,y=25}); mouseMask.tick(0.69)
@@ -203,7 +238,7 @@ check(not mouseMask.spoon.highlight and mouseMask.toggles==1,
     'mouse confirmation hides highlight while preserving native exit')
 local openingMouse=fixture(); openingMouse.motion=true; openingMouse.begin()
 openingMouse.move({x=245,y=25}); openingMouse.tick(0.3)
-check(openingMouse.spoon:status().state=='opening' and openingMouse.canvas.bounds.x==232,
+check(openingMouse.spoon:status().state=='opening' and openingMouse.canvas.element.frame.x==232,
     'mouse highlight works while entry geometry is still moving')
 local startup=fixture(); startup.begin()
 for _=1,5 do startup.spoon.screenWatcher.callback() end

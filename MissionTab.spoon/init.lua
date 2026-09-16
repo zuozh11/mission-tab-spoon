@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.23', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.24', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -59,7 +59,7 @@ end
 function obj:_highlight(target)
     if not target then
         if self.highlight then self.highlight:delete(); self.highlight = nil end
-        self.highlightFrame = nil
+        self.highlightFrame, self.highlightScreen = nil, nil
         return
     end
     local f = target.frame
@@ -67,18 +67,29 @@ function obj:_highlight(target)
     local previous = self.highlightFrame
     if previous and previous.x == frame.x and previous.y == frame.y
         and previous.w == frame.w and previous.h == frame.h then return end
+    local screen = hs.mouse.getCurrentScreen():fullFrame()
+    local oldScreen = self.highlightScreen
+    if self.highlight and (oldScreen.x ~= screen.x or oldScreen.y ~= screen.y
+        or oldScreen.w ~= screen.w or oldScreen.h ~= screen.h) then
+        self.highlight:delete()
+        self.highlight = nil
+    end
+    -- Keep the native overlay window still: Mission Control can animate window moves
+    -- independently of AX geometry. Only redraw the rectangle inside this screen canvas.
+    local drawingFrame = { x = frame.x - screen.x, y = frame.y - screen.y, w = frame.w, h = frame.h }
     if not self.highlight then
-        self.highlight = hs.canvas.new(frame):level('overlay')
+        self.highlight = hs.canvas.new(screen):level('overlay')
             :behavior({ 'canJoinAllSpaces', 'stationary' }):clickActivating(false)
             :canvasMouseEvents(false, false, false, false):mouseCallback(nil)
-        self.highlight:appendElements({ type = 'rectangle', action = 'fill',
+        self.highlight:appendElements({ type = 'rectangle', action = 'fill', frame = drawingFrame,
             fillColor = { red = 0.2, green = 0.55, blue = 1, alpha = 0.20 },
             roundedRectRadii = { xRadius = 8, yRadius = 8 } })
+        self.highlight:show()
     else
-        self.highlight:frame(frame)
+        self.highlight:elementAttribute(1, 'frame', drawingFrame)
     end
+    self.highlightScreen = screen
     self.highlightFrame = frame
-    self.highlight:show()
 end
 
 function obj:_finish(reason)
@@ -230,8 +241,9 @@ function obj:_tick()
             hs.spaces.openMissionControl()
             return
         end
-        if time - run.openedAt > self.openTimeout then
-            if snapshot.present and #MC.onScreen(snapshot, run.screenID, run.screenFrame).candidates == 0 then
+        local scoped = MC.onScreen(snapshot, run.screenID, run.screenFrame)
+        if time - run.openedAt > self.openTimeout and #scoped.candidates == 0 then
+            if snapshot.present then
                 self:_cancel('no-windows')
                 return
             end
@@ -240,8 +252,8 @@ function obj:_tick()
             return
         end
         -- Preview as soon as AX exposes a usable frame; keep following it during animation.
-        -- Stabilization freezes navigation order; release can confirm a live target earlier.
-        local scoped = MC.onScreen(snapshot, run.screenID, run.screenFrame)
+        -- Freeze navigation order when stable, or at the deadline if windows are usable.
+        -- Release can confirm a live target earlier.
         local candidates, base = MC.order(scoped.candidates)
         if base then
             if run.recent then
@@ -274,7 +286,8 @@ function obj:_tick()
         if s.released and (base or (run.mouseSelection and snapshot.present)) then
             run.backend, run.pid = snapshot.backend, snapshot.pid
             s.mode = run.mouseSelection and 'navigating' or 'committing'
-        elseif MC.stable(run.previous, scoped) then
+        elseif MC.stable(run.previous, scoped)
+            or (base and time - run.openedAt > self.openTimeout) then
             run.candidates, run.base = candidates, base
             run.backend, run.pid = snapshot.backend, snapshot.pid
             -- AX frames can settle before native hover tracking is ready.
@@ -509,8 +522,13 @@ function obj:start()
             self.suspended = 'secure-input'
         elseif self.suspended == 'secure-input' then self.suspended = nil end
         if not self.tap:isEnabled() then
-            if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
             self.tap:start()
+            -- A timeout can disable the tap without a user cancellation. Recover the
+            -- physical Command state in case its release happened while events were lost.
+            local active = self.queuedSessions[#self.queuedSessions] or self.session
+            if active.mode ~= 'idle' then
+                active:handle('flags', '', hs.eventtap.checkKeyboardModifiers(), false, now())
+            end
         end
     end)
     self.screenLayout = screenLayout()
