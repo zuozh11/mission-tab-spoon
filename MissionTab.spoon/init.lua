@@ -195,7 +195,7 @@ function obj:_tick()
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self:_finish('pointer-screen-unavailable'); return end
-        local recent = original and { original:id() } or {}
+        local recent = {}
         for _, window in ipairs(hs.window.orderedWindows()) do
             if not original or window:id() ~= original:id() then recent[#recent + 1] = window:id() end
         end
