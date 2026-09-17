@@ -37,7 +37,10 @@ local function fixture(holdDelay)
         mouse={getCurrentScreen=function() return {id=function() return 1 end,
             fullFrame=function() return f.screenFrame or {x=0,y=0,w=1000,h=1000} end} end, absolutePosition=function(p) if p then f.pointer=p end; return f.pointer end},
         window={get=win,focusedWindow=function() return win(f.focused) end,orderedWindows=function() return {win(1),win(2),win(3)} end},
-        spaces={openMissionControl=function() f.present=not f.noOpen end,toggleMissionControl=function()
+        spaces={openMissionControl=function()
+            f.opens=(f.opens or 0)+1
+            f.present=not f.noOpen and not (f.showDesktop and f.opens==1)
+        end,toggleMissionControl=function()
             f.toggles=f.toggles+1
             if not f.stuck then f.present=not f.present; f.focused=f.hoverID or f.focused end
         end},
@@ -157,7 +160,20 @@ mouseExit.tick(0.6); mouseExit.tick(0.63)
 check(mouseExit.spoon:status().state=='idle' and mouseExit.pointer.x==800 and mouseExit.pointer.y==800,
     'mouse confirmation preserves the user pointer position after exit')
 local movingEntry=fixture(); movingEntry.motion=true; movingEntry.begin()
+for _,released in ipairs({false,true}) do
+    local desktop=fixture(); desktop.showDesktop=true; desktop.begin()
+    if released then desktop.input(3,55,{}) end
+    desktop.tick(1.6)
+    check(desktop.opens==2 and desktop.present and not desktop.spoon.suspended,
+        'Show Desktop retries an absent overview once without suspending')
+    desktop.tick(1.7); desktop.tick(1.8)
+    if not released then desktop.input(3,55,{}); desktop.tick(1.9) end
+    desktop.tick(2)
+    check(desktop.spoon:status().lastResult.matched and desktop.toggles==1,
+        'Show Desktop entry confirms even if Command was released before retry')
+end
 movingEntry.tick(0.5); movingEntry.tick(2)
+check(movingEntry.opens==1, 'visible overview never retries its opening request')
 check(movingEntry.present and movingEntry.toggles==0 and not movingEntry.spoon.suspended,
     'visible moving entry must not automatically close at the stabilization deadline')
 local restartedTap=fixture(); restartedTap.begin(); restartedTap.ready()
@@ -429,8 +445,9 @@ check(otherClosed.spoon.run.target.id==2 and otherClosed.toggles==0,
     'navigation skips a previously closed window without cancelling')
 f=fixture(); f.begin(); f.ready(); f.input(1,53,{cmd=true}); f.tick(0.6); f.input(3,55,{}); f.tick(0.8); f.tick(1)
 check(f.focused==1 and f.spoon:status().state=='idle', 'Esc cancels without later release committing')
-f=fixture(); f.noOpen=true; f.begin(); f.tick(2); f.tick(2.2); f.tick(2.4)
+f=fixture(); f.noOpen=true; f.begin(); f.tick(2); f.tick(3.6); f.tick(3.8)
 check(f.spoon:status().suspended and f.spoon:status().state=='idle', 'overview that never appears cancels and suspends')
+check(f.opens==2, 'unavailable overview gets at most one retry')
 check(not f.input(1,48,{cmd=true}), 'suspended plugin preserves native shortcut')
 f=fixture(); f.begin(); f.ready(); f.stuck=true; f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(3)
 check(f.spoon:status().suspended and f.toggles==1, 'close timeout never blindly toggles twice')

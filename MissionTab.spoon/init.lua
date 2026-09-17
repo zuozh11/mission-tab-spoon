@@ -246,6 +246,13 @@ function obj:_tick()
                 self:_cancel('no-windows')
                 return
             end
+            -- Show Desktop can consume the first request without opening overview.
+            -- Retry once only after the full deadline and a fresh absent snapshot.
+            if not run.openRetried then
+                run.openRetried, run.openedAt = true, time
+                hs.spaces.openMissionControl()
+                return
+            end
             self.suspended = 'Mission Control did not expose usable windows; call start() to retry'
             self:_cancel('open-timeout')
             return
