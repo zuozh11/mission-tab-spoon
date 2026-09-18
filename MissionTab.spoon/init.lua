@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.25', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.26', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -327,7 +327,8 @@ function obj:_tick()
             end
             self:_finish(run.cancelReason or 'committed')
         elseif time - run.closing > self.closeTimeout then
-            self.suspended = 'Mission Control did not close; call start() to retry'
+            self.log.w('Mission Control close timed out; ending this gesture')
+            -- Drop stale queued input, but let a fresh gesture inspect the current overview.
             self:_finish('close-timeout') -- No repeated toggle or click at an uncertain coordinate.
         end
         return

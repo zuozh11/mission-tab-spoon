@@ -345,7 +345,7 @@ check(cancelled.spoon:status().state=='idle' and cancelled.toggles==1, 'Escape c
 check(cancelled.input(2,53,{}), 'queued Escape release remains owned after cancellation')
 local failed=fixture(); failed.begin(); failed.input(3,55,{}); failed.stuck=true; failed.tick(0.21)
 failed.input(1,48,{cmd=true}); failed.tick(2)
-check(failed.spoon:status().suspended and #failed.spoon.queuedSessions==0, 'close failure drops queued gestures')
+check(not failed.spoon:status().suspended and #failed.spoon.queuedSessions==0, 'close failure drops queued gestures without disabling future input')
 check(failed.input(2,48,{}), 'failed queue still consumes its matching key release')
 local moving=fixture(); moving.motion=true; moving.begin()
 moving.input(1,48,{cmd=true}); moving.input(2,48,{cmd=true}); moving.tick(0.3)
@@ -450,7 +450,24 @@ check(f.spoon:status().suspended and f.spoon:status().state=='idle', 'overview t
 check(f.opens==2, 'unavailable overview gets at most one retry')
 check(not f.input(1,48,{cmd=true}), 'suspended plugin preserves native shortcut')
 f=fixture(); f.begin(); f.ready(); f.stuck=true; f.input(3,55,{}); f.tick(0.9); f.tick(1.2); f.tick(3)
-check(f.spoon:status().suspended and f.toggles==1, 'close timeout never blindly toggles twice')
+check(not f.spoon:status().suspended and f.toggles==1, 'close timeout never blindly toggles twice or suspends input')
+check(f.spoon:status().lastResult.reason=='close-timeout' and f.spoon:status().state=='idle'
+    and not f.spoon.workTimer and not f.spoon.highlight, 'close timeout records failure and releases worker and overlay')
+f.tick(4)
+check(f.toggles==1, 'idle timeout recovery does not retry an old close request')
+f.stuck=false
+check(f.input(1,48,{cmd=true}), 'new gesture remains available after close timeout')
+f.input(2,48,{cmd=true}); f.tick(4.03); f.input(3,55,{}); f.tick(4.06)
+check(not f.present and f.toggles==2 and f.spoon:status().state=='idle',
+    'new gesture dismisses the overview still open after timeout')
+local recovered=fixture(); recovered.begin(); recovered.ready(); recovered.stuck=true
+recovered.input(3,55,{}); recovered.tick(0.9); recovered.tick(3)
+recovered.present=false; recovered.stuck=false -- User or delayed system animation closes it.
+recovered.input(1,48,{cmd=true}); recovered.input(2,48,{cmd=true})
+recovered.tick(3.03); recovered.tick(3.2); recovered.input(3,55,{})
+recovered.tick(3.23); recovered.tick(3.26)
+check(recovered.opens==2 and recovered.spoon:status().lastResult.reason=='committed'
+    and recovered.spoon:status().lastResult.matched, 'fresh navigation succeeds after delayed external close')
 f=fixture(); f.begin(); f.ready(); f.pid=8; f.tick(0.6); f.tick(0.8); f.tick(1)
 check(f.spoon:status().lastResult.reason=='overview-replaced', 'process replacement cancels stale candidates')
 f=fixture(); f.begin(); f.ready(); f.move({x=800,y=800}); f.tick(0.9)
