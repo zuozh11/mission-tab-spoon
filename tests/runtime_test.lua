@@ -41,9 +41,19 @@ local function fixture(holdDelay)
             focusedWindow=function() return win(f.focused) end,
             list=function() return {{kCGWindowNumber=1,kCGWindowOwnerPID=101},
                 {kCGWindowNumber=2,kCGWindowOwnerPID=102},{kCGWindowNumber=3,kCGWindowOwnerPID=103}} end},
-        axuielement={applicationElementForPID=function(pid)
-            f.resolvedPID=pid
+        application={frontmostApplication=function() return {pid=function() return f.frontPID or f.focused+100 end} end,
+            watcher={new=watcher,activated=1}},
+        axuielement={observer={new=function()
+            local observer=watcher(nil)
+            function observer:callback(fn) self.notify=fn; return self end
+            function observer:addWatcher() return self end
+            return observer
+        end},applicationElementForPID=function(pid)
             return {setTimeout=function() end,attributeValue=function(_,name)
+                if name=='AXFocusedWindow' then
+                    return {setTimeout=function() end,asHSWindow=function() return win(f.focused) end}
+                end
+                f.resolvedPID=pid
                 assert(name=='AXWindows')
                 if f.targetUnresponsive then f.time=f.time+0.05; return nil end
                 return {{setTimeout=function() end,asHSWindow=function() return win(pid-100) end}}
@@ -144,6 +154,38 @@ for _,shift in ipairs({false,true}) do
     check(entry.focused==2 and entry.spoon:status().lastResult.matched,
         'entry selection confirms by window ID after initial pointer placement')
 end
+-- The system stack remains 1,2,3 even when real focus history is 1,3,1.
+local history=fixture()
+history.focused=3; history.spoon.applicationWatcher.callback(nil,1)
+history.focused=1; history.spoon.applicationWatcher.callback(nil,1)
+history.begin(); history.ready()
+check(history.spoon.run.target.id==3, 'entry prefers real focus history over application stacking order')
+history.input(1,48,{cmd=true}); history.input(2,48,{cmd=true}); history.tick(0.6)
+check(history.spoon.run.target.id==1, 'later Tab still follows spatial order after MRU entry')
+local sameApp=fixture(); sameApp.frontPID=101
+sameApp.focused=3; sameApp.spoon.focusObserver.notify(sameApp.spoon.focusObserver)
+sameApp.focused=1; sameApp.spoon.focusObserver.notify(sameApp.spoon.focusObserver)
+sameApp.begin(); sameApp.ready()
+check(sameApp.spoon.run.target.id==3, 'focus changes within one application update MRU')
+local vanished=fixture()
+vanished.focused=3; vanished.spoon.applicationWatcher.callback(nil,1)
+vanished.focused=1; vanished.spoon.applicationWatcher.callback(nil,1)
+vanished.removed=3; vanished.begin(); vanished.ready()
+check(vanished.spoon.run.target.id==2, 'closed or out-of-scope history entries are skipped')
+local preview=fixture(); preview.begin(); preview.ready()
+preview.focused=3; preview.spoon.applicationWatcher.callback(nil,1)
+check(preview.spoon.focusHistory[1]==1, 'overview focus changes do not pollute usage history')
+local secureHistory=fixture(); secureHistory.secure=true; secureHistory.spoon.health.callback()
+secureHistory.focused=3; secureHistory.spoon.applicationWatcher.callback(nil,1)
+secureHistory.focused=1; secureHistory.spoon.applicationWatcher.callback(nil,1)
+secureHistory.secure=false; secureHistory.spoon.health.callback()
+secureHistory.begin(); secureHistory.ready()
+check(secureHistory.spoon.run.target.id==3, 'secure input suspends shortcuts without losing focus history')
+local stopped=fixture(); local observer=stopped.spoon.focusObserver
+local appWatcher=stopped.spoon.applicationWatcher
+stopped.spoon:stop()
+check(not observer.enabled and not appWatcher.enabled, 'stop releases focus observers')
+
 local targeted=fixture(); targeted.begin(); targeted.ready(); targeted.input(3,55,{})
 targeted.tick(0.6); targeted.tick(0.63)
 check(targeted.resolvedPID==102 and targeted.spoon:status().lastResult.matched,

@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.27', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.28', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -51,6 +51,51 @@ local function windowForID(id)
         element:setTimeout(0.05)
         local window = element:asHSWindow()
         if window and window:id() == id then return window end
+    end
+end
+
+-- Stacking order can raise an application's other windows without focusing them.
+-- Observe only the frontmost application; never enumerate all AX windows for MRU.
+function obj:_rememberFocus(root)
+    if not self.running or self.run then return end
+    local element = root:attributeValue('AXFocusedWindow')
+    if not element then return end
+    element:setTimeout(0.05)
+    local window = element:asHSWindow()
+    local id = window and window:id()
+    if not id then return end
+    for i, recentID in ipairs(self.focusHistory) do
+        if recentID == id then table.remove(self.focusHistory, i); break end
+    end
+    table.insert(self.focusHistory, 1, id)
+    -- Bound stale IDs from closed windows without subscribing to every application.
+    self.focusHistory[129] = nil
+end
+
+function obj:_watchFocus()
+    if self.focusObserver then self.focusObserver:stop(); self.focusObserver = nil end
+    local app = hs.application.frontmostApplication()
+    if not app then return end
+    local pid = app:pid()
+    local root = hs.axuielement.applicationElementForPID(pid)
+    if not root then return end
+    root:setTimeout(0.05)
+    self:_rememberFocus(root)
+    -- Some applications do not support AX notifications. Keep the recorded focus
+    -- and retry on their next activation rather than breaking keyboard navigation.
+    local ok, err = pcall(function()
+        local observer = hs.axuielement.observer.new(pid)
+        self.focusObserver = observer
+        observer:callback(function(source)
+            local front = hs.application.frontmostApplication()
+            if self.focusObserver == source and front and front:pid() == pid then
+                self:_rememberFocus(root)
+            end
+        end):addWatcher(root, 'AXFocusedWindowChanged'):start()
+    end)
+    if not ok then
+        if self.focusObserver then self.focusObserver:stop(); self.focusObserver = nil end
+        self.log.w('Cannot observe focused window: ' .. tostring(err))
     end
 end
 
@@ -125,6 +170,7 @@ function obj:_finish(reason)
     self.lastResult = self.lastResult or {}
     self.lastResult.reason = reason
     self.run = nil
+    if self.running then self:_watchFocus() end
     self.session:reset()
     if resumeQueue and not self.suspended and #self.queuedSessions > 0 then
         local nextSession = table.remove(self.queuedSessions, 1)
@@ -216,11 +262,15 @@ function obj:_tick()
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self:_finish('pointer-screen-unavailable'); return end
-        local recent = {}
-        for _, window in ipairs(hs.window.list()) do
-            local id = window.kCGWindowNumber
-            if not original or id ~= original:id() then recent[#recent + 1] = id end
+        local recent, seen = {}, {}
+        local originalID = original and original:id()
+        local function append(id)
+            if id and id ~= originalID and not seen[id] then
+                recent[#recent + 1], seen[id] = id, true
+            end
         end
+        for _, id in ipairs(self.focusHistory) do append(id) end
+        for _, window in ipairs(hs.window.list()) do append(window.kCGWindowNumber) end
         self.run = { original = original, recent = recent, serial = s.serial,
             screenID = screen:id(), screenFrame = screen:fullFrame(),
             pointer = hs.mouse.absolutePosition(), stepOrigin = s.directions[1] }
@@ -537,6 +587,11 @@ function obj:start()
     if not hs.accessibilityState() then self.suspended = 'Accessibility permission required'; return self end
     self.tap = hs.eventtap.new({ types.keyDown, types.keyUp, types.flagsChanged, types.mouseMoved }, function(e) return self:_event(e) end):start()
     self.running = true
+    self.focusHistory = {}
+    self.applicationWatcher = hs.application.watcher.new(function(_, kind)
+        if self.running and kind == hs.application.watcher.activated then self:_watchFocus() end
+    end):start()
+    self:_watchFocus()
     self.health = hs.timer.doEvery(0.5, function()
         if not self.running then return end
         if hs.eventtap.isSecureInputEnabled() then
@@ -573,7 +628,7 @@ function obj:stop()
     self.queuedSessions = {}
     self.restartAfterCleanup = false
     if self.tap then self.tap:stop(); self.tap = nil end
-    for _, key in ipairs({ 'health', 'workTimer', 'replayTimer', 'screenWatcher', 'sleepWatcher' }) do
+    for _, key in ipairs({ 'health', 'workTimer', 'replayTimer', 'screenWatcher', 'sleepWatcher', 'applicationWatcher', 'focusObserver' }) do
         if self[key] then self[key]:stop(); self[key] = nil end
     end
     local run = self.run
