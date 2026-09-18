@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.26', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.27', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -30,6 +30,27 @@ local function restorePointer(run)
     if run and run.pointerMoved and not run.userPointer then
         hs.mouse.absolutePosition(run.pointer)
         run.pointerMoved = false
+    end
+end
+
+-- Resolve only the selected window's process. hs.window.get() and orderedWindows()
+-- enumerate every application through AX; one slow app can disable our event tap.
+local function windowForID(id)
+    if not id then return nil end
+    local pid
+    for _, window in ipairs(hs.window.list()) do
+        if window.kCGWindowNumber == id then pid = window.kCGWindowOwnerPID; break end
+    end
+    if not pid then return nil end
+    local root = hs.axuielement.applicationElementForPID(pid)
+    if not root then return nil end
+    local deadline = now() + 0.2
+    root:setTimeout(0.05)
+    for _, element in ipairs(root:attributeValue('AXWindows') or {}) do
+        if now() >= deadline then return nil end
+        element:setTimeout(0.05)
+        local window = element:asHSWindow()
+        if window and window:id() == id then return window end
     end
 end
 
@@ -196,8 +217,9 @@ function obj:_tick()
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self:_finish('pointer-screen-unavailable'); return end
         local recent = {}
-        for _, window in ipairs(hs.window.orderedWindows()) do
-            if not original or window:id() ~= original:id() then recent[#recent + 1] = window:id() end
+        for _, window in ipairs(hs.window.list()) do
+            local id = window.kCGWindowNumber
+            if not original or id ~= original:id() then recent[#recent + 1] = id end
         end
         self.run = { original = original, recent = recent, serial = s.serial,
             screenID = screen:id(), screenFrame = screen:fullFrame(),
@@ -379,7 +401,7 @@ function obj:_tick()
         self:_highlight()
         local target = MC.find(MC.onScreen(snapshot, run.screenID, run.screenFrame), run.target)
         if not target then self:_cancel('target-disappeared'); return end
-        run.focusTarget = target.id and hs.window.get(target.id)
+        run.focusTarget = windowForID(target.id)
         if not run.focusTarget then self:_cancel('target-unavailable'); return end
         hs.spaces.toggleMissionControl()
         run.closing, s.mode = time, 'closing'

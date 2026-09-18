@@ -36,7 +36,19 @@ local function fixture(holdDelay)
         accessibilityState=function() return true end,
         mouse={getCurrentScreen=function() return {id=function() return 1 end,
             fullFrame=function() return f.screenFrame or {x=0,y=0,w=1000,h=1000} end} end, absolutePosition=function(p) if p then f.pointer=p end; return f.pointer end},
-        window={get=win,focusedWindow=function() return win(f.focused) end,orderedWindows=function() return {win(1),win(2),win(3)} end},
+        window={get=function() error('global AX enumeration blocks input') end,
+            orderedWindows=function() error('global AX enumeration blocks input') end,
+            focusedWindow=function() return win(f.focused) end,
+            list=function() return {{kCGWindowNumber=1,kCGWindowOwnerPID=101},
+                {kCGWindowNumber=2,kCGWindowOwnerPID=102},{kCGWindowNumber=3,kCGWindowOwnerPID=103}} end},
+        axuielement={applicationElementForPID=function(pid)
+            f.resolvedPID=pid
+            return {setTimeout=function() end,attributeValue=function(_,name)
+                assert(name=='AXWindows')
+                if f.targetUnresponsive then f.time=f.time+0.05; return nil end
+                return {{setTimeout=function() end,asHSWindow=function() return win(pid-100) end}}
+            end}
+        end},
         spaces={openMissionControl=function()
             f.opens=(f.opens or 0)+1
             f.present=not f.noOpen and not (f.showDesktop and f.opens==1)
@@ -132,6 +144,14 @@ for _,shift in ipairs({false,true}) do
     check(entry.focused==2 and entry.spoon:status().lastResult.matched,
         'entry selection confirms by window ID after initial pointer placement')
 end
+local targeted=fixture(); targeted.begin(); targeted.ready(); targeted.input(3,55,{})
+targeted.tick(0.6); targeted.tick(0.63)
+check(targeted.resolvedPID==102 and targeted.spoon:status().lastResult.matched,
+    'confirmation resolves only the selected window owner without global AX enumeration')
+local unavailable=fixture(); unavailable.begin(); unavailable.ready(); unavailable.targetUnresponsive=true
+unavailable.input(3,55,{}); unavailable.tick(0.6); unavailable.tick(0.7)
+check(unavailable.spoon:status().lastResult.reason=='target-unavailable' and not unavailable.spoon.suspended,
+    'unresponsive selected application ends the gesture without disabling input')
 local reverseMask=fixture(); reverseMask.begin(); reverseMask.ready()
 local originalCanvas=reverseMask.canvas
 for _,id in ipairs({1,3,2,1}) do
