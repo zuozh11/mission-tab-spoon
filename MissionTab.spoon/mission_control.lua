@@ -91,6 +91,42 @@ function MC.order(candidates)
         end
         column.entries[#column.entries + 1] = entry
     end
+    -- A staggered middle window can fall outside the centre-based column span.
+    -- Existing windows above and below it establish the column; a horizontal
+    -- overlap with one of those windows supplies the alignment evidence.
+    -- Decide all assignments before applying them so additions cannot form a chain.
+    local attachments = {}
+    for _, source in ipairs(columns) do
+        if #source.entries == 1 then
+            local entry = source.entries[1]
+            local frame = entry.candidate.frame
+            local best, bestDistance
+            for _, target in ipairs(columns) do
+                if #target.entries > 1 then
+                    local top, bottom, distance, sameRow = math.huge, -math.huge, nil, false
+                    for _, member in ipairs(target.entries) do
+                        top, bottom = math.min(top, member.y), math.max(bottom, member.y)
+                        local other = member.candidate.frame
+                        local overlap = math.min(frame.x + frame.w, other.x + other.w) - math.max(frame.x, other.x)
+                        if overlap >= math.min(frame.w, other.w) / 3 then
+                            distance = math.min(distance or math.huge, math.abs(entry.x - member.x))
+                        end
+                        local verticalOverlap = math.min(frame.y + frame.h, other.y + other.h) - math.max(frame.y, other.y)
+                        if verticalOverlap > math.min(frame.h, other.h) / 4 then sameRow = true end
+                    end
+                    if entry.y > top and entry.y < bottom and distance and not sameRow
+                        and (not bestDistance or distance < bestDistance) then
+                        best, bestDistance = target, distance
+                    end
+                end
+            end
+            if best then attachments[#attachments + 1] = { source = source, target = best, entry = entry } end
+        end
+    end
+    for _, attachment in ipairs(attachments) do
+        attachment.target.entries[#attachment.target.entries + 1] = attachment.entry
+        attachment.source.entries = {}
+    end
     local ordered = {}
     for _, column in ipairs(columns) do
         table.sort(column.entries, function(a, b)

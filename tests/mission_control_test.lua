@@ -112,20 +112,48 @@ local thirdFrames={
     {13,61,583,373}, {14,562,577,366}, {776,96,400,250}, {603,442,575,366},
     {669,861,437,269}, {1189,63,654,389}, {1615,464,419,296}, {1189,771,624,367},
 }
+local fourthFrames={
+    {14,65,548,349}, {142,648,381,239}, {570,62,553,355}, {555,427,548,349},
+    {552,808,416,256}, {1130,62,622,371}, {1443,444,592,348}, {1035,790,397,279},
+}
 -- Scaling, display origins, small layout shifts and AX enumeration must not change the columns.
-for _,scale in ipairs({0.5,1,2.5}) do
-    for _,jitter in ipairs({-8,0,8}) do
-        local candidates={}
-        for i=#thirdFrames,1,-1 do
-            local f=thirdFrames[i]
-            candidates[#candidates+1]={id=i,frame={
-                x=-2400+(f[1]+(i%2==0 and jitter or -jitter))*scale,
-                y=300+f[2]*scale,w=f[3]*scale,h=f[4]*scale,
-            }}
+for _,frames in ipairs({thirdFrames,fourthFrames}) do
+    for _,scale in ipairs({0.5,1,2.5}) do
+        for _,jitter in ipairs({-8,0,8}) do
+            local candidates={}
+            for i=#frames,1,-1 do
+                local f=frames[i]
+                candidates[#candidates+1]={id=i,frame={
+                    x=-2400+(f[1]+(i%2==0 and jitter or -jitter))*scale,
+                    y=300+f[2]*scale,w=f[3]*scale,h=f[4]*scale,
+                }}
+            end
+            local result=mc.order(candidates)
+            for i=1,8 do check(result[i].id==i, 'eight-window layout retains three visual columns') end
         end
-        local result=mc.order(candidates)
-        for i=1,8 do check(result[i].id==i, 'eight-window layout retains three visual columns') end
     end
+end
+for _,case in ipairs({
+    {x=60,y=150,expected={1,3,2}}, -- A staggered window fills the missing middle of a column.
+    {x=70,y=150,expected={1,2,3}}, -- A narrow overlap is not enough evidence.
+    {x=60,y=20,expected={1,2,3}},  -- Side-by-side windows on the same row remain separate.
+    {x=60,y=450,expected={1,2,3}}, -- No extrapolation beyond the established column.
+}) do
+    local result=mc.order({
+        {id=1,frame={x=0,y=0,w=100,h=100}},
+        {id=2,frame={x=0,y=300,w=100,h=100}},
+        {id=3,frame={x=case.x,y=case.y,w=100,h=100}},
+    })
+    for i,id in ipairs(case.expected) do check(result[i].id==id, 'fill only supported gaps in established columns') end
+end
+local noAttachmentChain=mc.order({
+    {id=1,frame={x=0,y=0,w=100,h=80}},
+    {id=2,frame={x=0,y=300,w=100,h=80}},
+    {id=3,frame={x=60,y=110,w=100,h=80}},
+    {id=4,frame={x=120,y=220,w=100,h=80}},
+})
+for i,id in ipairs({1,3,2,4}) do
+    check(noAttachmentChain[i].id==id, 'an attached window cannot pull another window into the column')
 end
 local nearAligned=mc.order({
     {id=2,frame={x=0,y=100,w=100,h=60}},
