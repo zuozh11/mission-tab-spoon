@@ -69,6 +69,21 @@ local staggered=mc.order({
     {id=1,frame={x=10,y=0,w=80,h=80}},
 })
 for i=1,4 do check(staggered[i].id==i, 'uneven thumbnail sizes and offsets retain top-to-bottom columns') end
+local screenshot=mc.order({
+    {id=4,frame={x=1215,y=543,w=818,h=466}},
+    {id=2,frame={x=758,y=64,w=830,h=466}},
+    {id=3,frame={x=413,y=603,w=792,h=466}},
+    {id=1,frame={x=11,y=122,w=740,h=472}},
+})
+for i,id in ipairs({1,3,2,4}) do
+    check(screenshot[i].id==id, 'screenshot layout visits the lower-left window before the upper-right')
+end
+local chained=mc.order({
+    {id=3,frame={x=120,y=0,w=100,h=60}},
+    {id=2,frame={x=60,y=100,w=100,h=60}},
+    {id=1,frame={x=0,y=0,w=100,h=60}},
+})
+for i=1,3 do check(chained[i].id==i, 'pairwise overlap does not chain distinct columns together') end
 local stacked=mc.order({
     {id=3,frame={x=0,y=80,w=60,h=60}},
     {id=1,frame={x=0,y=0,w=60,h=60}},

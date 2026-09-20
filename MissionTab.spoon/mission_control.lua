@@ -59,7 +59,7 @@ function MC.order(candidates)
     for i, candidate in ipairs(candidates) do
         local f = candidate.frame
         entries[i] = { candidate = candidate, ordinal = i,
-            x = f.x + f.w / 2, y = f.y + f.h / 2, width = f.w }
+            x = f.x + f.w / 2, y = f.y + f.h / 2, left = f.x, right = f.x + f.w }
     end
     local function tieBreak(a, b)
         local aid, bid = a.candidate.id, b.candidate.id
@@ -74,13 +74,14 @@ function MC.order(candidates)
     local columns = {}
     for _, entry in ipairs(entries) do
         local column = columns[#columns]
-        -- Anchor each column at its leftmost centre; do not chain staggered columns together.
-        if not column or entry.x - column.x > math.min(column.width, entry.width) / 2 then
-            column = { x = entry.x, width = entry.width, entries = {} }
+        -- Require a shared horizontal span; pairwise overlap must not chain columns together.
+        if not column or math.max(column.left, entry.left) >= math.min(column.right, entry.right) then
+            column = { left = entry.left, right = entry.right, entries = {} }
             columns[#columns + 1] = column
         end
         column.entries[#column.entries + 1] = entry
-        column.width = math.min(column.width, entry.width)
+        column.left = math.max(column.left, entry.left)
+        column.right = math.min(column.right, entry.right)
     end
     local ordered = {}
     for _, column in ipairs(columns) do
