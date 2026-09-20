@@ -46,7 +46,7 @@ local function fixture(holdDelay)
             list=function() return {{kCGWindowNumber=1,kCGWindowOwnerPID=101},
                 {kCGWindowNumber=2,kCGWindowOwnerPID=102},{kCGWindowNumber=3,kCGWindowOwnerPID=103}} end},
         application={applicationForPID=function(pid)
-            return {bundleID=function() return "app." .. pid end, name=function() return "App " .. pid end}
+            return {bundleID=function() return "app." .. pid end}
         end,frontmostApplication=function() return {pid=function() return f.frontPID or f.focused+100 end} end,
             watcher={new=watcher,activated=1}},
         axuielement={observer={new=function()
@@ -151,18 +151,19 @@ end
 -- Badges also work in an externally opened overview without a keyboard session.
 local badges=fixture(); badges.present=true; badges.spoon.health.callback()
 local iconCanvas=badges.spoon.iconCanvases[1]
-check(badges.spoon.session.mode=='idle' and #iconCanvas.elements==6,
+check(badges.spoon.session.mode=='idle' and #iconCanvas.elements==3,
     'manual overview shows one application icon for every ungrouped window')
-check(iconCanvas.elements[3].image=='app.102' and iconCanvas.elements[3].frame.x==201
-    and iconCanvas.elements[3].frame.y==18
-    and iconCanvas.elements[4].text=='App 102' and iconCanvas.elements[4].frame.y==66, 'badge matches window owner at the bottom centre')
+check(iconCanvas.elements[2].image=='app.102' and iconCanvas.elements[2].frame.x==201
+    and iconCanvas.elements[2].frame.y==18
+    and iconCanvas.elements[2].type=='image' and iconCanvas.elements[2].withShadow,
+    'badge matches window owner at the bottom centre with a subtle shadow and no label')
 check(iconCanvas.activates==false and iconCanvas.callback==nil and not iconCanvas.mouseEvents[1],
     'application icons do not intercept native mouse interaction')
 badges.motion=true; badges.time=1; badges.spoon.iconTimer.callback()
-check(iconCanvas.elements[3].frame.x==301 and badges.iconLoads==3,
+check(iconCanvas.elements[2].frame.x==301 and badges.iconLoads==3,
     'badges follow layout changes while reusing application images')
 badges.removed=2; badges.spoon.iconTimer.callback()
-check(#iconCanvas.elements==4, 'closing a window removes its badge')
+check(#iconCanvas.elements==2, 'closing a window removes its badge')
 badges.present=false; badges.spoon.iconTimer.callback()
 check(iconCanvas.deleted and badges.spoon.iconTimer==nil and badges.spoon.iconImages==nil,
     'leaving overview removes badges, cached images and animation timer')

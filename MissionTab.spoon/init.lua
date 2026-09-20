@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.32', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.33', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -188,8 +188,7 @@ function obj:_updateAppIcons()
             if pid and icon == nil then
                 local app = hs.application.applicationForPID(pid)
                 local bundle = app and app:bundleID()
-                local image = bundle and hs.image.imageFromAppBundle(bundle)
-                icon = image and { image = image, name = app:name() } or false
+                icon = bundle and hs.image.imageFromAppBundle(bundle) or false
                 self.iconImages[pid] = icon
             end
             if icon then
@@ -197,15 +196,12 @@ function obj:_updateAppIcons()
                 -- Straddle the bottom edge like the native grouped badge, but keep
                 -- the entire icon on screen for thumbnails near a display edge.
                 local x = math.max(0, math.min(frame.w - size, thumbnail.x - frame.x + (thumbnail.w - size) / 2))
-                local y = math.max(0, math.min(frame.h - size - 20, thumbnail.y - frame.y + thumbnail.h - 32))
-                elements[#elements + 1] = { type = 'image', image = icon.image,
-                    frame = { x = x, y = y, w = size, h = size }, imageScaling = 'scaleProportionally' }
-                local labelWidth = math.min(frame.w, math.max(160, thumbnail.w))
-                local labelX = math.max(0, math.min(frame.w - labelWidth, x + size / 2 - labelWidth / 2))
-                elements[#elements + 1] = { type = 'text', text = icon.name,
-                    frame = { x = labelX, y = y + size, w = labelWidth, h = 20 },
-                    textSize = 13, textColor = { white = 1, alpha = 0.9 },
-                    textAlignment = 'center', textLineBreak = 'truncateTail' }
+                local y = math.max(0, math.min(frame.h - size, thumbnail.y - frame.y + thumbnail.h - 32))
+                elements[#elements + 1] = { type = 'image', image = icon,
+                    frame = { x = x, y = y, w = size, h = size }, imageScaling = 'scaleProportionally',
+                    withShadow = true,
+                    shadow = { blurRadius = 3, color = { white = 0, alpha = 0.25 },
+                        offset = { w = 0, h = -1 } } }
             end
         end
         if #elements > 0 then
