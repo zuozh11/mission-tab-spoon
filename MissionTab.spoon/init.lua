@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.31', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.32', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -155,6 +155,85 @@ function obj:_highlight(target)
     end
     self.highlightScreen = screen
     self.highlightFrame = frame
+end
+
+-- App badges share the native overview's geometry, including when opened by a gesture.
+-- Keep one stationary, click-through canvas per display, as with selection feedback.
+function obj:_clearAppIcons()
+    for _, canvas in pairs(self.iconCanvases or {}) do canvas:delete() end
+    self.iconCanvases, self.iconImages, self.iconGrouped = nil, nil, nil
+    if self.iconTimer then self.iconTimer:stop(); self.iconTimer = nil end
+end
+
+function obj:_updateAppIcons()
+    local snapshot = MC.snapshot()
+    if not snapshot.present then self:_clearAppIcons(); return end
+    if self.iconGrouped == nil then
+        local preferences = hs.plist.read(os.getenv('HOME') .. '/Library/Preferences/com.apple.dock.plist') or {}
+        self.iconGrouped = preferences['expose-group-apps'] == true
+    end
+    if self.iconGrouped then return end -- macOS supplies the grouped badges.
+    self.iconCanvases, self.iconImages = self.iconCanvases or {}, self.iconImages or {}
+    local owners = {}
+    for _, window in ipairs(hs.window.list()) do
+        owners[window.kCGWindowNumber] = window.kCGWindowOwnerPID
+    end
+    local visible = {}
+    for _, screen in ipairs(hs.screen.allScreens()) do
+        local id, frame = screen:id(), screen:fullFrame()
+        local elements = {}
+        for _, candidate in ipairs(MC.onScreen(snapshot, id, frame).candidates) do
+            local pid = owners[candidate.id]
+            local icon = pid and self.iconImages[pid]
+            if pid and icon == nil then
+                local app = hs.application.applicationForPID(pid)
+                local bundle = app and app:bundleID()
+                local image = bundle and hs.image.imageFromAppBundle(bundle)
+                icon = image and { image = image, name = app:name() } or false
+                self.iconImages[pid] = icon
+            end
+            if icon then
+                local thumbnail, size = candidate.frame, 48
+                -- Straddle the bottom edge like the native grouped badge, but keep
+                -- the entire icon on screen for thumbnails near a display edge.
+                local x = math.max(0, math.min(frame.w - size, thumbnail.x - frame.x + (thumbnail.w - size) / 2))
+                local y = math.max(0, math.min(frame.h - size - 20, thumbnail.y - frame.y + thumbnail.h - 32))
+                elements[#elements + 1] = { type = 'image', image = icon.image,
+                    frame = { x = x, y = y, w = size, h = size }, imageScaling = 'scaleProportionally' }
+                local labelWidth = math.min(frame.w, math.max(160, thumbnail.w))
+                local labelX = math.max(0, math.min(frame.w - labelWidth, x + size / 2 - labelWidth / 2))
+                elements[#elements + 1] = { type = 'text', text = icon.name,
+                    frame = { x = labelX, y = y + size, w = labelWidth, h = 20 },
+                    textSize = 13, textColor = { white = 1, alpha = 0.9 },
+                    textAlignment = 'center', textLineBreak = 'truncateTail' }
+            end
+        end
+        if #elements > 0 then
+            visible[id] = true
+            local canvas = self.iconCanvases[id]
+            if not canvas then
+                canvas = hs.canvas.new(frame):level('overlay')
+                    :behavior({ 'canJoinAllSpaces', 'stationary' }):clickActivating(false)
+                    :canvasMouseEvents(false, false, false, false):mouseCallback(nil)
+                self.iconCanvases[id] = canvas
+            end
+            canvas:replaceElements(elements):show()
+        end
+    end
+    for id, canvas in pairs(self.iconCanvases) do
+        if not visible[id] then canvas:delete(); self.iconCanvases[id] = nil end
+    end
+    if not self.iconTimer then
+        self.iconTimer = hs.timer.doEvery(0.03, function() self:_safeAppIcons() end)
+    end
+end
+
+function obj:_safeAppIcons()
+    local ok, err = xpcall(function() self:_updateAppIcons() end, debug.traceback)
+    if not ok then
+        self:_clearAppIcons()
+        self.log.w('Cannot display application icons: ' .. tostring(err))
+    end
 end
 
 function obj:_finish(reason)
@@ -594,6 +673,7 @@ function obj:start()
     self:_watchFocus()
     self.health = hs.timer.doEvery(0.5, function()
         if not self.running then return end
+        if not self.iconTimer then self:_safeAppIcons() end
         if hs.eventtap.isSecureInputEnabled() then
             if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
             self.suspended = 'secure-input'
@@ -613,6 +693,7 @@ function obj:start()
         local layout = screenLayout()
         if layout == self.screenLayout then return end
         self.screenLayout = layout
+        self:_clearAppIcons()
         if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
     end):start()
     self.sleepWatcher = hs.caffeinate.watcher.new(function(kind)
@@ -624,6 +705,7 @@ function obj:start()
 end
 
 function obj:stop()
+    self:_clearAppIcons()
     self:_highlight()
     self.queuedSessions = {}
     self.restartAfterCleanup = false

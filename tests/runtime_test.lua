@@ -29,6 +29,10 @@ local function fixture(holdDelay)
         return e
     end
     local hs = {
+        plist={read=function() return {["expose-group-apps"]=f.grouped==true} end},
+        image={imageFromAppBundle=function(bundle)
+            f.iconLoads=(f.iconLoads or 0)+1; return not f.noIcon and bundle or nil
+        end},
         timer={absoluteTime=function() return f.time*1e9 end, doEvery=function(_,fn) return watcher(fn):start() end,
             doAfter=function(_,fn) return watcher(fn):start() end},
         logger={new=function() return {w=function() end,e=function(err) error(err) end} end},
@@ -41,7 +45,9 @@ local function fixture(holdDelay)
             focusedWindow=function() return win(f.focused) end,
             list=function() return {{kCGWindowNumber=1,kCGWindowOwnerPID=101},
                 {kCGWindowNumber=2,kCGWindowOwnerPID=102},{kCGWindowNumber=3,kCGWindowOwnerPID=103}} end},
-        application={frontmostApplication=function() return {pid=function() return f.frontPID or f.focused+100 end} end,
+        application={applicationForPID=function(pid)
+            return {bundleID=function() return "app." .. pid end, name=function() return "App " .. pid end}
+        end,frontmostApplication=function() return {pid=function() return f.frontPID or f.focused+100 end} end,
             watcher={new=watcher,activated=1}},
         axuielement={observer={new=function()
             local observer=watcher(nil)
@@ -91,6 +97,7 @@ local function fixture(holdDelay)
         function canvas:clickActivating(value) self.activates=value; return self end
         function canvas:canvasMouseEvents(...) self.mouseEvents={...}; return self end
         function canvas:mouseCallback(value) self.callback=value; return self end
+        function canvas:replaceElements(value) self.elements=value; return self end
         function canvas:appendElements(value) self.element=value; return self end
         function canvas:elementAttribute(_, key, value) self.element[key]=value; return self end
         function canvas:frame(value) self.frameUpdates=self.frameUpdates+1; self.bounds=value; return self end
@@ -141,6 +148,36 @@ local function fixture(holdDelay)
     function f.ready() f.tick(0.5); f.tick(0.54) end
     return f
 end
+-- Badges also work in an externally opened overview without a keyboard session.
+local badges=fixture(); badges.present=true; badges.spoon.health.callback()
+local iconCanvas=badges.spoon.iconCanvases[1]
+check(badges.spoon.session.mode=='idle' and #iconCanvas.elements==6,
+    'manual overview shows one application icon for every ungrouped window')
+check(iconCanvas.elements[3].image=='app.102' and iconCanvas.elements[3].frame.x==201
+    and iconCanvas.elements[3].frame.y==18
+    and iconCanvas.elements[4].text=='App 102' and iconCanvas.elements[4].frame.y==66, 'badge matches window owner at the bottom centre')
+check(iconCanvas.activates==false and iconCanvas.callback==nil and not iconCanvas.mouseEvents[1],
+    'application icons do not intercept native mouse interaction')
+badges.motion=true; badges.time=1; badges.spoon.iconTimer.callback()
+check(iconCanvas.elements[3].frame.x==301 and badges.iconLoads==3,
+    'badges follow layout changes while reusing application images')
+badges.removed=2; badges.spoon.iconTimer.callback()
+check(#iconCanvas.elements==4, 'closing a window removes its badge')
+badges.present=false; badges.spoon.iconTimer.callback()
+check(iconCanvas.deleted and badges.spoon.iconTimer==nil and badges.spoon.iconImages==nil,
+    'leaving overview removes badges, cached images and animation timer')
+badges.grouped=true; badges.present=true; badges.spoon.health.callback()
+check(badges.spoon.iconCanvases==nil, 'grouped overview keeps only the native application icons')
+badges.present=false; badges.spoon.health.callback()
+badges.grouped=false; badges.present=true; badges.spoon.health.callback()
+check(badges.spoon.iconCanvases[1]~=nil, 'grouping preference is reread for the next overview')
+local finalCanvas=badges.spoon.iconCanvases[1]; badges.spoon:stop()
+check(finalCanvas.deleted and badges.spoon.iconTimer==nil, 'stop cleans up application badges')
+local missingIcon=fixture(); missingIcon.present=true; missingIcon.noIcon=true
+missingIcon.spoon.health.callback()
+check(next(missingIcon.spoon.iconCanvases)==nil and not missingIcon.spoon.suspended,
+    'unavailable app images do not interrupt keyboard navigation')
+
 for _,shift in ipairs({false,true}) do
     local entry=fixture(); entry.motion=true
     entry.input(1,48,{cmd=true,shift=shift}); entry.input(2,48,{cmd=true,shift=shift})
@@ -593,7 +630,8 @@ empty.tick(3.03); empty.tick(3.06); empty.input(3,55,{}); empty.tick(3.09); empt
 check(empty.spoon:status().lastResult.matched, 'next gesture works when windows become available')
 local idle=fixture()
 for _=1,100 do idle.spoon.health.callback() end
-check(idle.snapshotCalls==0, 'idle health checks do not enumerate accessibility windows')
+check(idle.snapshotCalls==100 and idle.spoon.iconTimer==nil,
+    'idle health checks inspect only the overview and leave the animation timer stopped')
 local stationary=fixture(); stationary.begin(); stationary.ready(); stationary.tick(0.9)
 local updates, shows=stationary.canvas.frameUpdates, stationary.canvas.shows
 for i=1,10 do stationary.tick(0.9+i*0.03) end
