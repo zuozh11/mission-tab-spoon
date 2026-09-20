@@ -68,8 +68,8 @@ local staggered=mc.order({
     {id=3,frame={x=120,y=0,w=80,h=80}},
     {id=1,frame={x=10,y=0,w=80,h=80}},
 })
-for i,id in ipairs({2,1,3,4}) do
-    check(staggered[i].id==id, 'horizontal centres take priority over vertical position')
+for i,id in ipairs({1,2,3,4}) do
+    check(staggered[i].id==id, 'small horizontal offsets retain top-to-bottom columns')
 end
 local screenshot=mc.order({
     {id=4,frame={x=1215,y=543,w=818,h=466}},
@@ -89,6 +89,55 @@ local secondScreenshot=mc.order({
 for i,id in ipairs({1,4,3,2}) do
     check(secondScreenshot[i].id==id, 'second screenshot follows left-to-right centres across staggered rows')
 end
+for _,layout in ipairs({{screenshot,{1,3,2,4}}, {secondScreenshot,{1,4,3,2}}}) do
+    for _,scale in ipairs({0.5,2.5}) do
+        for _,jitter in ipairs({-8,8}) do
+            local candidates={}
+            for i=#layout[1],1,-1 do
+                local original=layout[1][i]
+                local f=original.frame
+                candidates[#candidates+1]={id=original.id,frame={
+                    x=-2400+(f.x+(i%2==0 and jitter or -jitter))*scale,
+                    y=300+f.y*scale,w=f.w*scale,h=f.h*scale,
+                }}
+            end
+            local result=mc.order(candidates)
+            for i,id in ipairs(layout[2]) do
+                check(result[i].id==id, 'four-window layouts retain their order after scaling and small shifts')
+            end
+        end
+    end
+end
+local thirdFrames={
+    {13,61,583,373}, {14,562,577,366}, {776,96,400,250}, {603,442,575,366},
+    {669,861,437,269}, {1189,63,654,389}, {1615,464,419,296}, {1189,771,624,367},
+}
+-- Scaling, display origins, small layout shifts and AX enumeration must not change the columns.
+for _,scale in ipairs({0.5,1,2.5}) do
+    for _,jitter in ipairs({-8,0,8}) do
+        local candidates={}
+        for i=#thirdFrames,1,-1 do
+            local f=thirdFrames[i]
+            candidates[#candidates+1]={id=i,frame={
+                x=-2400+(f[1]+(i%2==0 and jitter or -jitter))*scale,
+                y=300+f[2]*scale,w=f[3]*scale,h=f[4]*scale,
+            }}
+        end
+        local result=mc.order(candidates)
+        for i=1,8 do check(result[i].id==i, 'eight-window layout retains three visual columns') end
+    end
+end
+local nearAligned=mc.order({
+    {id=2,frame={x=0,y=100,w=100,h=60}},
+    {id=1,frame={x=2,y=0,w=100,h=60}},
+})
+check(nearAligned[1].id==1 and nearAligned[2].id==2, 'two-pixel offset does not reverse a single column')
+local distant=mc.order({
+    {id=1,frame={x=0,y=100,w=60,h=60}},
+    {id=2,frame={x=100,y=0,w=60,h=60}},
+    {id=3,frame={x=1000,y=0,w=60,h=60}},
+})
+for i=1,3 do check(distant[i].id==i, 'a distant window does not merge distinct nearby columns') end
 local chained=mc.order({
     {id=3,frame={x=120,y=0,w=100,h=60}},
     {id=2,frame={x=60,y=100,w=100,h=60}},

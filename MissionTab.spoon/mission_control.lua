@@ -52,14 +52,15 @@ function MC.snapshot()
     return result
 end
 
--- Visit thumbnail centres from left to right; break horizontal ties from top to bottom.
+-- Infer columns from horizontal spacing, then visit each column from top to bottom.
 function MC.order(candidates)
     if #candidates == 0 then return candidates, nil end
-    local entries = {}
+    local entries, widths = {}, {}
     for i, candidate in ipairs(candidates) do
         local f = candidate.frame
         entries[i] = { candidate = candidate, ordinal = i,
             x = f.x + f.w / 2, y = f.y + f.h / 2 }
+        widths[i] = f.w
     end
     local function tieBreak(a, b)
         local aid, bid = a.candidate.id, b.candidate.id
@@ -71,8 +72,34 @@ function MC.order(candidates)
         if a.y ~= b.y then return a.y < b.y end
         return tieBreak(a, b)
     end)
+    table.sort(widths)
+    local typicalWidth = (widths[math.floor((#widths + 1) / 2)] + widths[math.ceil((#widths + 1) / 2)]) / 2
+    local largestGap = 0
+    for i = 2, #entries do
+        largestGap = math.max(largestGap, entries[i].x - entries[i - 1].x)
+    end
+    -- Tolerate small alignment errors even in a single column. Clear gutters allow
+    -- wider offsets, but one distant window cannot inflate tolerance without limit.
+    local columnSpan = math.max(typicalWidth / 4, math.min(largestGap, typicalWidth) * 2 / 3)
+    local columns = {}
+    for _, entry in ipairs(entries) do
+        local column = columns[#columns]
+        -- Measure the entire span, not adjacent gaps, to prevent chained merging.
+        if not column or entry.x - column.x > columnSpan then
+            column = { x = entry.x, entries = {} }
+            columns[#columns + 1] = column
+        end
+        column.entries[#column.entries + 1] = entry
+    end
     local ordered = {}
-    for _, entry in ipairs(entries) do ordered[#ordered + 1] = entry.candidate end
+    for _, column in ipairs(columns) do
+        table.sort(column.entries, function(a, b)
+            if a.y ~= b.y then return a.y < b.y end
+            if a.x ~= b.x then return a.x < b.x end
+            return tieBreak(a, b)
+        end)
+        for _, entry in ipairs(column.entries) do ordered[#ordered + 1] = entry.candidate end
+    end
     return ordered, 1
 end
 
