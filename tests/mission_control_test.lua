@@ -68,7 +68,9 @@ local staggered=mc.order({
     {id=3,frame={x=120,y=0,w=80,h=80}},
     {id=1,frame={x=10,y=0,w=80,h=80}},
 })
-for i=1,4 do check(staggered[i].id==i, 'uneven thumbnail sizes and offsets retain top-to-bottom columns') end
+for i,id in ipairs({2,1,3,4}) do
+    check(staggered[i].id==id, 'horizontal centres take priority over vertical position')
+end
 local screenshot=mc.order({
     {id=4,frame={x=1215,y=543,w=818,h=466}},
     {id=2,frame={x=758,y=64,w=830,h=466}},
@@ -77,6 +79,15 @@ local screenshot=mc.order({
 })
 for i,id in ipairs({1,3,2,4}) do
     check(screenshot[i].id==id, 'screenshot layout visits the lower-left window before the upper-right')
+end
+local secondScreenshot=mc.order({
+    {id=2,frame={x=1204,y=111,w=833,h=477}},
+    {id=3,frame={x=765,y=598,w=840,h=471}},
+    {id=4,frame={x=396,y=64,w=801,h=471}},
+    {id=1,frame={x=14,y=549,w=740,h=472}},
+})
+for i,id in ipairs({1,4,3,2}) do
+    check(secondScreenshot[i].id==id, 'second screenshot follows left-to-right centres across staggered rows')
 end
 local chained=mc.order({
     {id=3,frame={x=120,y=0,w=100,h=60}},

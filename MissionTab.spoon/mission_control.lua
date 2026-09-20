@@ -52,14 +52,14 @@ function MC.snapshot()
     return result
 end
 
--- Read columns from left to right, and thumbnails within each column from top to bottom.
+-- Visit thumbnail centres from left to right; break horizontal ties from top to bottom.
 function MC.order(candidates)
     if #candidates == 0 then return candidates, nil end
     local entries = {}
     for i, candidate in ipairs(candidates) do
         local f = candidate.frame
         entries[i] = { candidate = candidate, ordinal = i,
-            x = f.x + f.w / 2, y = f.y + f.h / 2, left = f.x, right = f.x + f.w }
+            x = f.x + f.w / 2, y = f.y + f.h / 2 }
     end
     local function tieBreak(a, b)
         local aid, bid = a.candidate.id, b.candidate.id
@@ -71,27 +71,8 @@ function MC.order(candidates)
         if a.y ~= b.y then return a.y < b.y end
         return tieBreak(a, b)
     end)
-    local columns = {}
-    for _, entry in ipairs(entries) do
-        local column = columns[#columns]
-        -- Require a shared horizontal span; pairwise overlap must not chain columns together.
-        if not column or math.max(column.left, entry.left) >= math.min(column.right, entry.right) then
-            column = { left = entry.left, right = entry.right, entries = {} }
-            columns[#columns + 1] = column
-        end
-        column.entries[#column.entries + 1] = entry
-        column.left = math.max(column.left, entry.left)
-        column.right = math.min(column.right, entry.right)
-    end
     local ordered = {}
-    for _, column in ipairs(columns) do
-        table.sort(column.entries, function(a, b)
-            if a.y ~= b.y then return a.y < b.y end
-            if a.x ~= b.x then return a.x < b.x end
-            return tieBreak(a, b)
-        end)
-        for _, entry in ipairs(column.entries) do ordered[#ordered + 1] = entry.candidate end
-    end
+    for _, entry in ipairs(entries) do ordered[#ordered + 1] = entry.candidate end
     return ordered, 1
 end
 
