@@ -17,7 +17,13 @@ end
 local a,b=window(10,100),window(20,200)
 local display=node({AXIdentifier='mc.display',AXFrame={x=0,y=0}}, {a,b,node({AXIdentifier='mc.spaces',AXRole='AXGroup'})})
 local roots={['com.apple.WindowManager']=node({}, {display}),['com.apple.dock']=node({}, {node({AXIdentifier='mc'})})}
-local fake={application={applicationsForBundleID=function(bundle)
+local visibleIDs, windowListReads={10,20},0
+local fake={window={list=function()
+    windowListReads=windowListReads+1
+    local result={}
+    for _,id in ipairs(visibleIDs) do result[#result+1]={kCGWindowNumber=id} end
+    return result
+end},application={applicationsForBundleID=function(bundle)
     if roots[bundle] then return {{bundle=bundle,pid=function() return 1 end}} end
     return {}
 end},axuielement={applicationElement=function(app) return roots[app.bundle] end}}
@@ -34,16 +40,32 @@ check(mc.stable(snap,mc.snapshot()), 'unchanged geometry is ready')
 b.AXFrame={x=250,y=10,w=50,h=50}
 check(not mc.stable(snap,mc.snapshot()), 'animation geometry must settle')
 check(mc.find(mc.snapshot(),{id=20}).frame.x==250, 'navigation uses fresh thumbnail geometry')
+local invisible=window(409,244)
+invisible.AXIdentifier='com.mac.utility.media.hub.space.48'
+invisible.AXFrame={x=244,y=190,w=1205,h=757}
+display.AXChildren[#display.AXChildren+1]=invisible
+local reads=windowListReads
+snap=mc.snapshot()
+check(#snap.candidates==2 and not mc.find(snap,{id=409}),
+    'invisible player exposed by AX cannot enter navigation, hover or highlight candidates')
+check(windowListReads==reads+1, 'visible window IDs are queried once per snapshot')
+visibleIDs={10,20,409}
+check(mc.find(mc.snapshot(),{id=409})~=nil, 'player becomes selectable when the system displays it')
+visibleIDs={10,20}
+check(mc.find(mc.snapshot(),{id=409})==nil, 'visibility is refreshed after a window leaves the screen')
 roots['com.apple.WindowManager']=nil
 roots['com.apple.dock']=node({}, {node({AXIdentifier='mc'}, {node({AXIdentifier='mc.display',AXFrame={x=-1000,y=0}}, {
-    node({AXIdentifier='mc.windows'}, {a,b})})})})
+    node({AXIdentifier='mc.windows'}, {a,b,invisible})})})})
 snap=mc.snapshot()
 check(snap.backend=='Dock' and #snap.candidates==2, 'legacy tree recognized by capability')
+check(not mc.find(snap,{id=409}), 'legacy backend also excludes invisible windows')
 a.wid=nil; b.wid=nil
 snap=mc.snapshot()
 check(mc.find(snap,snap.candidates[1]).element==a, 'without wid use AX identity rather than title')
 roots['com.apple.dock']=nil
+reads=windowListReads
 check(not mc.snapshot().present, 'absent processes are a closed overview')
+check(windowListReads==reads, 'closed overview does not enumerate system windows')
 local target={element=1,frame={x=0,y=0,w=100,h=100}}
 local cover={element=2,frame={x=30,y=0,w=100,h=100}}
 local point=mc.point({candidates={target,cover}},target)

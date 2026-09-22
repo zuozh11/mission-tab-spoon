@@ -16,10 +16,22 @@ end
 
 function MC.snapshot()
     local result = { present = false, candidates = {} }
+    local visibleIDs
     local function add(element, display, displayID)
         local frame = element:attributeValue('AXFrame')
         if not frame or frame.w <= 0 or frame.h <= 0 or element:attributeValue('AXEnabled') == false then return end
         local wid = element:attributeValue('wid')
+        -- AX can expose windows from another Space without displaying a thumbnail.
+        -- Intersect known IDs with the current Window Server list, once per snapshot.
+        if wid then
+            if not visibleIDs then
+                visibleIDs = {}
+                for _, window in ipairs(hs.window.list()) do
+                    visibleIDs[window.kCGWindowNumber] = true
+                end
+            end
+            if not visibleIDs[wid] then return end
+        end
         result.candidates[#result.candidates + 1] = {
             element = element, id = wid, frame = frame, display = display, displayID = displayID,
         }
