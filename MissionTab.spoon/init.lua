@@ -1,6 +1,6 @@
 --- === MissionTab ===
 --- Short Command-Tab switches applications; hold Command to navigate Mission Control.
-local obj = { name = 'MissionTab', version = '0.2.33', author = 'zuozhi', license = 'MIT' }
+local obj = { name = 'MissionTab', version = '0.2.34', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
 local MC = dofile(directory .. 'mission_control.lua')
@@ -161,12 +161,13 @@ end
 -- Keep one stationary, click-through canvas per display, as with selection feedback.
 function obj:_clearAppIcons()
     for _, canvas in pairs(self.iconCanvases or {}) do canvas:delete() end
-    self.iconCanvases, self.iconImages, self.iconGrouped = nil, nil, nil
+    self.iconCanvases, self.iconImages, self.iconGrouped, self.iconElements = nil, nil, nil, nil
+    self.iconOwners, self.iconWindowIDs = nil, nil
     if self.iconTimer then self.iconTimer:stop(); self.iconTimer = nil end
 end
 
-function obj:_updateAppIcons()
-    local snapshot = MC.snapshot()
+function obj:_updateAppIcons(snapshot)
+    snapshot = snapshot or MC.snapshot()
     if not snapshot.present then self:_clearAppIcons(); return end
     if self.iconGrouped == nil then
         local preferences = hs.plist.read(os.getenv('HOME') .. '/Library/Preferences/com.apple.dock.plist') or {}
@@ -174,10 +175,26 @@ function obj:_updateAppIcons()
     end
     if self.iconGrouped then return end -- macOS supplies the grouped badges.
     self.iconCanvases, self.iconImages = self.iconCanvases or {}, self.iconImages or {}
-    local owners = {}
-    for _, window in ipairs(hs.window.list()) do
-        owners[window.kCGWindowNumber] = window.kCGWindowOwnerPID
+    self.iconElements = self.iconElements or {}
+    local ids, changed = {}, self.iconWindowIDs == nil
+    for _, candidate in ipairs(snapshot.candidates) do
+        if candidate.id then
+            ids[candidate.id] = true
+            if not self.iconWindowIDs or not self.iconWindowIDs[candidate.id]
+                or not self.iconOwners[candidate.id] then changed = true end
+        end
     end
+    for id in pairs(self.iconWindowIDs or {}) do
+        if not ids[id] then changed = true; break end
+    end
+    if changed then
+        self.iconOwners = {}
+        for _, window in ipairs(hs.window.list()) do
+            self.iconOwners[window.kCGWindowNumber] = window.kCGWindowOwnerPID
+        end
+        self.iconWindowIDs = ids
+    end
+    local owners = self.iconOwners
     local visible = {}
     for _, screen in ipairs(hs.screen.allScreens()) do
         local id, frame = screen:id(), screen:fullFrame()
@@ -213,19 +230,40 @@ function obj:_updateAppIcons()
                     :canvasMouseEvents(false, false, false, false):mouseCallback(nil)
                 self.iconCanvases[id] = canvas
             end
-            canvas:replaceElements(elements):show()
+            local previous = self.iconElements[id]
+            local changed = not previous or #previous ~= #elements
+            if not changed then
+                for i, element in ipairs(elements) do
+                    local old, frame = previous[i], element.frame
+                    if old.image ~= element.image or old.frame.x ~= frame.x or old.frame.y ~= frame.y
+                        or old.frame.w ~= frame.w or old.frame.h ~= frame.h then
+                        changed = true
+                        break
+                    end
+                end
+            end
+            if changed then
+                canvas:replaceElements(elements):show()
+                self.iconElements[id] = elements
+            end
         end
     end
     for id, canvas in pairs(self.iconCanvases) do
-        if not visible[id] then canvas:delete(); self.iconCanvases[id] = nil end
+        if not visible[id] then
+            canvas:delete()
+            self.iconCanvases[id], self.iconElements[id] = nil, nil
+        end
     end
     if not self.iconTimer then
-        self.iconTimer = hs.timer.doEvery(0.03, function() self:_safeAppIcons() end)
+        self.iconTimer = hs.timer.doEvery(0.03, function()
+            -- The navigation worker supplies a fresh snapshot while it owns the gesture.
+            if not self.workTimer then self:_safeAppIcons() end
+        end)
     end
 end
 
-function obj:_safeAppIcons()
-    local ok, err = xpcall(function() self:_updateAppIcons() end, debug.traceback)
+function obj:_safeAppIcons(snapshot)
+    local ok, err = xpcall(function() self:_updateAppIcons(snapshot) end, debug.traceback)
     if not ok then
         self:_clearAppIcons()
         self.log.w('Cannot display application icons: ' .. tostring(err))
@@ -318,15 +356,14 @@ function obj:_replay(remainingFlags)
     self:_finish('native-replay')
 end
 
-function obj:_tick()
+function obj:_tick(snapshot)
     local s, time = self.session, now()
     if s.mode == 'idle' then return end
     s:advance(time)
     -- Resolve external overview changes on the worker, never from a stale health cache.
-    local snapshot
     if not self.run and s.mode ~= 'cancelling' then
         if s.mode ~= 'pending' or not s.entryChecked then
-            snapshot = MC.snapshot()
+            snapshot = snapshot or MC.snapshot()
             s.entryChecked = true
             if snapshot.present then s.mode = 'dismissing' end
         end
@@ -536,7 +573,15 @@ function obj:_tick()
 end
 
 function obj:_safeTick()
-    local ok, err = xpcall(function() self:_tick() end, debug.traceback)
+    local ok, err = xpcall(function()
+        if self.session.mode == 'idle' then return end
+        self.session:advance(now())
+        if self.session.mode == 'pending' and self.session.entryChecked then return end
+        -- Share only within this callback; never reuse AX elements across worker ticks.
+        local snapshot = MC.snapshot()
+        self:_safeAppIcons(snapshot)
+        self:_tick(snapshot)
+    end, debug.traceback)
     if not ok then
         self:_highlight()
         restorePointer(self.run)
@@ -669,7 +714,7 @@ function obj:start()
     self:_watchFocus()
     self.health = hs.timer.doEvery(0.5, function()
         if not self.running then return end
-        if not self.iconTimer then self:_safeAppIcons() end
+        if not self.iconTimer and not self.workTimer then self:_safeAppIcons() end
         if hs.eventtap.isSecureInputEnabled() then
             if self.session.mode ~= 'idle' then self.session.mode, self.session.cancelledByUser = 'cancelling', false end
             self.suspended = 'secure-input'

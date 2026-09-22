@@ -43,7 +43,7 @@ local function fixture(holdDelay)
         window={get=function() error('global AX enumeration blocks input') end,
             orderedWindows=function() error('global AX enumeration blocks input') end,
             focusedWindow=function() return win(f.focused) end,
-            list=function() return {{kCGWindowNumber=1,kCGWindowOwnerPID=101},
+            list=function() f.windowLists=(f.windowLists or 0)+1; return {{kCGWindowNumber=1,kCGWindowOwnerPID=101},
                 {kCGWindowNumber=2,kCGWindowOwnerPID=102},{kCGWindowNumber=3,kCGWindowOwnerPID=103}} end},
         application={applicationForPID=function(pid)
             return {bundleID=function() return "app." .. pid end}
@@ -97,7 +97,7 @@ local function fixture(holdDelay)
         function canvas:clickActivating(value) self.activates=value; return self end
         function canvas:canvasMouseEvents(...) self.mouseEvents={...}; return self end
         function canvas:mouseCallback(value) self.callback=value; return self end
-        function canvas:replaceElements(value) self.elements=value; return self end
+        function canvas:replaceElements(value) self.replacements=(self.replacements or 0)+1; self.elements=value; return self end
         function canvas:appendElements(value) self.element=value; return self end
         function canvas:elementAttribute(_, key, value) self.element[key]=value; return self end
         function canvas:frame(value) self.frameUpdates=self.frameUpdates+1; self.bounds=value; return self end
@@ -159,11 +159,18 @@ check(iconCanvas.elements[2].image=='app.102' and iconCanvas.elements[2].frame.x
     'badge matches window owner at the bottom centre with a subtle shadow and no label')
 check(iconCanvas.activates==false and iconCanvas.callback==nil and not iconCanvas.mouseEvents[1],
     'application icons do not intercept native mouse interaction')
+local replacements=iconCanvas.replacements
+for _=1,10 do badges.spoon.iconTimer.callback() end
+check(badges.windowLists==1, 'stationary overview does not repeat system window enumeration')
+check(iconCanvas.replacements==replacements and iconCanvas.shows==1,
+    'stationary badges do not resubmit canvas elements or show calls')
 badges.motion=true; badges.time=1; badges.spoon.iconTimer.callback()
 check(iconCanvas.elements[2].frame.x==301 and badges.iconLoads==3,
     'badges follow layout changes while reusing application images')
 badges.removed=2; badges.spoon.iconTimer.callback()
-check(#iconCanvas.elements==2, 'closing a window removes its badge')
+check(#iconCanvas.elements==2 and badges.windowLists==2, 'closing a window refreshes ownership and removes its badge')
+badges.removed=nil; badges.spoon.iconTimer.callback()
+check(#iconCanvas.elements==3 and badges.windowLists==3, 'new windows refresh ownership and restore their badges')
 badges.present=false; badges.spoon.iconTimer.callback()
 check(iconCanvas.deleted and badges.spoon.iconTimer==nil and badges.spoon.iconImages==nil,
     'leaving overview removes badges, cached images and animation timer')
@@ -174,6 +181,28 @@ badges.grouped=false; badges.present=true; badges.spoon.health.callback()
 check(badges.spoon.iconCanvases[1]~=nil, 'grouping preference is reread for the next overview')
 local finalCanvas=badges.spoon.iconCanvases[1]; badges.spoon:stop()
 check(finalCanvas.deleted and badges.spoon.iconTimer==nil, 'stop cleans up application badges')
+local pending=fixture(0.18)
+pending.input(1,48,{cmd=true}); pending.spoon.workTimer.callback()
+local pendingCalls=pending.snapshotCalls
+pending.time=0.06; pending.spoon.workTimer.callback()
+check(pending.snapshotCalls==pendingCalls, 'pending hold does not repeatedly scan the overview')
+local shared=fixture(); shared.begin(); shared.ready()
+local calls=shared.snapshotCalls
+shared.time=0.6; shared.spoon.workTimer.callback()
+check(shared.snapshotCalls==calls+1 and shared.spoon.iconCanvases[1],
+    'navigation and badges share one fresh overview scan per worker callback')
+calls=shared.snapshotCalls
+shared.spoon.iconTimer.callback(); shared.spoon.health.callback()
+check(shared.snapshotCalls==calls, 'badge and health timers do not duplicate active worker scans')
+shared.present=false; shared.time=0.63; shared.spoon.workTimer.callback()
+check(shared.spoon.iconCanvases==nil and shared.spoon.iconTimer==nil,
+    'worker removes badges immediately when overview closes')
+local fallback=fixture(); fallback.begin(); fallback.ready(); fallback.time=0.6
+fallback.spoon.workTimer.callback()
+fallback.stuck=true; fallback.input(3,55,{}); fallback.tick(0.9); fallback.tick(3)
+calls=fallback.snapshotCalls; fallback.spoon.iconTimer.callback()
+check(fallback.snapshotCalls==calls+1 and fallback.spoon.iconCanvases[1],
+    'badge timer resumes independent scans after navigation times out with overview still open')
 local missingIcon=fixture(); missingIcon.present=true; missingIcon.noIcon=true
 missingIcon.spoon.health.callback()
 check(next(missingIcon.spoon.iconCanvases)==nil and not missingIcon.spoon.suspended,

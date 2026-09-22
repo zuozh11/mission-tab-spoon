@@ -3,18 +3,22 @@ local MC = {}
 local function applicationRoot(bundle)
     local app = hs.application.applicationsForBundleID(bundle)[1]
     if not app then return nil end
-    return hs.axuielement.applicationElement(app), app:pid()
+    local root = hs.axuielement.applicationElement(app)
+    if root then root:setTimeout(0.05) end
+    return root, app:pid()
 end
 
 local function children(element)
-    return element and element:attributeValue('AXChildren') or {}
+    local result = element and element:attributeValue('AXChildren') or {}
+    for _, child in ipairs(result) do child:setTimeout(0.05) end
+    return result
 end
 
 function MC.snapshot()
     local result = { present = false, candidates = {} }
     local function add(element, display, displayID)
         local frame = element:attributeValue('AXFrame')
-        if not frame or frame.w <= 0 or frame.h <= 0 or element.AXEnabled == false then return end
+        if not frame or frame.w <= 0 or frame.h <= 0 or element:attributeValue('AXEnabled') == false then return end
         local wid = element:attributeValue('wid')
         result.candidates[#result.candidates + 1] = {
             element = element, id = wid, frame = frame, display = display, displayID = displayID,
@@ -22,26 +26,26 @@ function MC.snapshot()
     end
     local root, pid = applicationRoot('com.apple.WindowManager')
     for _, display in ipairs(children(root)) do
-        if display.AXIdentifier == 'mc.display' then
+        if display:attributeValue('AXIdentifier') == 'mc.display' then
             result.present, result.backend, result.pid = true, 'WindowManager', pid
-            local displayFrame = display.AXFrame or { x = 0, y = 0 }
+            local displayFrame = display:attributeValue('AXFrame') or { x = 0, y = 0 }
             local displayID = display:attributeValue('AXDisplayID')
             for _, element in ipairs(children(display)) do
-                if element.AXRole == 'AXButton' then add(element, displayFrame, displayID) end
+                if element:attributeValue('AXRole') == 'AXButton' then add(element, displayFrame, displayID) end
             end
         end
     end
     if result.present then return result end
     root, pid = applicationRoot('com.apple.dock')
     for _, group in ipairs(children(root)) do
-        if group.AXIdentifier == 'mc' then
+        if group:attributeValue('AXIdentifier') == 'mc' then
             result.present, result.backend, result.pid = true, 'Dock', pid
             for _, display in ipairs(children(group)) do
-                if display.AXIdentifier == 'mc.display' then
-                    local displayFrame = display.AXFrame or { x = 0, y = 0 }
+                if display:attributeValue('AXIdentifier') == 'mc.display' then
+                    local displayFrame = display:attributeValue('AXFrame') or { x = 0, y = 0 }
                     local displayID = display:attributeValue('AXDisplayID')
                     for _, windows in ipairs(children(display)) do
-                        if windows.AXIdentifier == 'mc.windows' then
+                        if windows:attributeValue('AXIdentifier') == 'mc.windows' then
                             for _, element in ipairs(children(windows)) do add(element, displayFrame, displayID) end
                         end
                     end
