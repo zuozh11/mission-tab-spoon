@@ -9,7 +9,9 @@ local function fixture(holdDelay)
         return { callback=callback, start=function(self) self.enabled=true; return self end,
             stop=function(self) self.enabled=false end, isEnabled=function(self) return self.enabled end }
     end
-    local function win(id) return {id=function() return id end, focus=function() f.focused=id end,
+    local function win(id) return {id=function() return id end,
+        focus=function() if f.deferFocus then f.pendingFocus=id else f.focused=id end end,
+        isStandard=function() return id~=f.nonstandard end,
         frame=function() return {x=id*100,y=0,w=50,h=50} end} end
     local function newEvent(kind, key, flags)
         local e = {kind=kind,key=key,flags=flags or {},props={}}
@@ -43,8 +45,17 @@ local function fixture(holdDelay)
         window={get=function() error('global AX enumeration blocks input') end,
             orderedWindows=function() error('global AX enumeration blocks input') end,
             focusedWindow=function() return win(f.focused) end,
-            list=function() f.windowLists=(f.windowLists or 0)+1; return {{kCGWindowNumber=1,kCGWindowOwnerPID=101},
-                {kCGWindowNumber=2,kCGWindowOwnerPID=102},{kCGWindowNumber=3,kCGWindowOwnerPID=103}} end},
+            list=function()
+                f.windowLists=(f.windowLists or 0)+1
+                local windows={}
+                for id=1,3 do
+                    local pid=id==3 and f.frontPID or id+100
+                    windows[id]={kCGWindowNumber=id,kCGWindowOwnerPID=pid,kCGWindowLayer=0,
+                        kCGWindowIsOnscreen=id~=f.invisible,
+                        kCGWindowBounds={X=id==f.otherDisplay and 1200 or id*100,Y=0,Width=50,Height=50}}
+                end
+                return windows
+            end},
         application={applicationForPID=function(pid)
             return {bundleID=function() return "app." .. pid end}
         end,frontmostApplication=function() return {pid=function() return f.frontPID or f.focused+100 end} end,
@@ -62,6 +73,10 @@ local function fixture(holdDelay)
                 f.resolvedPID=pid
                 assert(name=='AXWindows')
                 if f.targetUnresponsive then f.time=f.time+0.05; return nil end
+                if pid==101 and f.frontPID==101 then
+                    return {{setTimeout=function() end,asHSWindow=function() return win(1) end},
+                        {setTimeout=function() end,asHSWindow=function() return win(3) end}}
+                end
                 return {{setTimeout=function() end,asHSWindow=function() return win(pid-100) end}}
             end}
         end},
@@ -72,7 +87,8 @@ local function fixture(holdDelay)
             f.toggles=f.toggles+1
             if not f.stuck then f.present=not f.present; f.focused=f.hoverID or f.focused end
         end},
-        screen={watcher={new=watcher},allScreens=function()
+        screen={watcher={new=watcher},find=function(rect) return {id=function() return rect.x>=1000 and 2 or 1 end} end,
+            allScreens=function()
             if f.screens then return f.screens end
             return {{id=function() return 1 end,fullFrame=function()
                 return f.screenFrame or {x=0,y=0,w=1000,h=1000}
@@ -132,8 +148,8 @@ local function fixture(holdDelay)
         local e=newEvent(kind,key,flags); if tag then e.props.tag=tag end
         f.modifiers=flags
         local consumed=f.spoon:_event(e)
-        local replay=f.spoon.replayTimer
-        if replay and not f.deferReplay then replay.callback() end
+        local release=f.spoon.releaseTimer
+        if release and not f.deferRelease then release.callback() end
         return consumed
     end
     function f.move(point)
@@ -229,11 +245,33 @@ history.begin(); history.ready()
 check(history.spoon.run.target.id==3, 'entry prefers real focus history over application stacking order')
 history.input(1,48,{cmd=true}); history.input(2,48,{cmd=true}); history.tick(0.6)
 check(history.spoon.run.target.id==1, 'later Tab still follows spatial order after MRU entry')
-local sameApp=fixture(); sameApp.frontPID=101
-sameApp.focused=3; sameApp.spoon.focusObserver.notify(sameApp.spoon.focusObserver)
-sameApp.focused=1; sameApp.spoon.focusObserver.notify(sameApp.spoon.focusObserver)
+local function sameAppHistory()
+    local f=fixture(0.18); f.frontPID=101
+    f.focused=3; f.spoon.focusObserver.notify(f.spoon.focusObserver)
+    f.focused=1; f.spoon.focusObserver.notify(f.spoon.focusObserver)
+    return f
+end
+local sameApp=sameAppHistory()
 sameApp.begin(); sameApp.ready()
 check(sameApp.spoon.run.target.id==3, 'focus changes within one application update MRU')
+local quickSameApp=sameAppHistory()
+for index, expected in ipairs({sameApp.spoon.run.target.id, 1, 3}) do
+    local time=index-1
+    quickSameApp.time=time
+    quickSameApp.input(1,48,{cmd=true}); quickSameApp.input(2,48,{cmd=true})
+    quickSameApp.time=time+0.08; quickSameApp.input(3,55,{})
+    local result=quickSameApp.spoon:status().lastResult
+    check(result and result.target==expected and result.matched and quickSameApp.focused==expected,
+        'short press alternates same-app windows using the long-hold starting target')
+end
+check(not quickSameApp.opens and quickSameApp.toggles==0 and quickSameApp.pointer.x==900 and #quickSameApp.posted==0,
+    'short confirmation never opens overview, moves the pointer or posts simulated keyboard events')
+for _, ineligible in ipairs({'invisible','otherDisplay','nonstandard'}) do
+    local scoped=sameAppHistory(); scoped[ineligible]=3
+    scoped.input(1,48,{cmd=true}); scoped.input(2,48,{cmd=true}); scoped.input(3,55,{})
+    check(scoped.focused==2 and scoped.spoon:status().lastResult.matched,
+        'short confirmation skips the most recent window when it is ' .. ineligible)
+end
 local vanished=fixture()
 vanished.focused=3; vanished.spoon.applicationWatcher.callback(nil,1)
 vanished.focused=1; vanished.spoon.applicationWatcher.callback(nil,1)
@@ -326,7 +364,6 @@ check(offsetScreen.canvas.bounds.x==-500 and offsetScreen.canvas.element.frame.x
     and offsetScreen.canvas.element.frame.y==50,
     'mask drawing uses local screen coordinates on displays with negative origins')
 offsetScreen.spoon:stop()
-local native=fixture(0.18)
 for _, duringEntry in ipairs({true, false}) do
     local overlap=fixture()
     if duringEntry then overlap.occluded=true end
@@ -351,31 +388,39 @@ check(temporaryOverlap.pointer.x==225 and temporaryOverlap.toggles==0,
 temporaryOverlap.input(1,48,{cmd=true}); temporaryOverlap.input(2,48,{cmd=true}); temporaryOverlap.tick(0.63)
 check(temporaryOverlap.spoon.run.target.id==3 and temporaryOverlap.pointer.x==325 and temporaryOverlap.toggles==0,
     'navigation continues after temporary thumbnail overlap')
-native.input(1,48,{cmd=true}); native.input(2,48,{cmd=true}); native.tick(0.08)
-native.input(3,55,{})
-check(#native.posted==4 and not native.present and native.spoon:status().state=='idle',
-    'short press immediately replays native switching without opening overview')
-check(native.spoon:status().lastResult.reason=='native-replay' and native.posted[4].flags.cmd==nil,
-    'native replay releases Command and clears previous target diagnostics')
-native.input(1,48,{cmd=true}); native.input(3,55,{})
-check(#native.posted==8 and native.input(2,48,{}), 'consecutive short gestures and late Tab release are preserved')
+local quick=fixture(0.18)
+quick.input(1,48,{cmd=true}); quick.input(2,48,{cmd=true}); quick.tick(0.08)
+quick.input(3,55,{})
+check(not quick.opens and quick.focused==2 and quick.spoon:status().lastResult.matched,
+    'short press focuses the window on release without a hold delay or overview')
+quick.input(1,48,{cmd=true}); quick.input(3,55,{})
+check(quick.input(2,48,{}), 'consecutive short gestures preserve ownership of a late Tab release')
+local async=fixture(0.18); async.deferFocus=true
+async.input(1,48,{cmd=true}); async.input(2,48,{cmd=true}); async.input(3,55,{})
+check(async.spoon:status().state=='switching' and async.pendingFocus==2,
+    'short press waits for an asynchronous focus change')
+async.input(1,48,{cmd=true}); async.input(2,48,{cmd=true}); async.input(3,55,{})
+async.focused=2; async.deferFocus=false; async.tick(0.03); async.tick(0.06)
+check(async.focused==1 and async.spoon:status().lastResult.matched and not async.opens,
+    'queued short gesture starts after the actual focus changes')
 local mixed=fixture(0.18); mixed.begin(); mixed.input(3,55,{}); mixed.stuck=true; mixed.tick(0.21)
-local beforeReplay=#mixed.posted
 mixed.input(1,48,{cmd=true}); mixed.input(2,48,{cmd=true}); mixed.input(3,55,{})
 mixed.input(1,48,{cmd=true}); mixed.input(2,48,{cmd=true})
-mixed.modifiers={cmd=true}
-check(#mixed.posted==beforeReplay, 'short gesture during exit waits its turn instead of replaying into overview')
+check(#mixed.spoon.queuedSessions==2 and mixed.opens==1, 'short gesture during exit waits its turn')
 mixed.present=false; mixed.stuck=false; mixed.tick(0.24); mixed.tick(0.27)
-check(#mixed.posted==beforeReplay+5 and mixed.posted[#mixed.posted].flags.cmd,
-    'queued native replay commits then restores Command held for the next gesture')
+check(not mixed.present and mixed.opens==1 and mixed.focused==1 and mixed.spoon:status().lastResult.matched,
+    'queued short gesture selects the previous window after the earlier confirmation')
 check(mixed.spoon.session.mode=='pending' and #mixed.spoon.queuedSessions==0,
-    'native replay continues to the next queued gesture')
+    'short confirmation continues to the next queued gesture')
 mixed.tick(0.5)
 check(mixed.present and mixed.spoon:status().state=='opening', 'next long gesture still opens overview')
 local reverse=fixture(0.18)
-reverse.input(1,48,{cmd=true,shift=true}); reverse.input(2,48,{cmd=true,shift=true}); reverse.input(3,55,{shift=true})
-check(#reverse.posted==6 and reverse.posted[3].flags[2]=='shift' and reverse.posted[6].flags.shift,
-    'reverse short replay preserves direction and remaining physical Shift')
+for _=1,2 do
+    reverse.input(1,48,{cmd=true,shift=true}); reverse.input(2,48,{cmd=true,shift=true})
+end
+reverse.input(3,55,{shift=true}); reverse.tick(0.03); reverse.tick(0.06)
+check(reverse.focused==1 and reverse.spoon:status().lastResult.matched and #reverse.posted==0,
+    'a second reverse step before release moves back from the recent initial target')
 local mask=fixture(); mask.motion=true; mask.begin()
 local canvas=mask.canvas
 check(canvas and canvas.visible and canvas.element.frame.x==220 and canvas.element.frame.y==0
@@ -636,7 +681,8 @@ opened.input(1,48,{cmd=true}); opened.input(2,48,{cmd=true}); opened.tick(0.03)
 check(opened.toggles==1 and not opened.present, 'manual overview opens are dismissed without a health refresh')
 local closed=fixture(0.18); closed.present=true; closed.spoon.health.callback(); closed.present=false
 closed.input(1,48,{cmd=true}); closed.input(2,48,{cmd=true}); closed.input(3,55,{})
-check(#closed.posted==4 and closed.spoon:status().lastResult.reason=='native-replay',
+closed.tick(0.03); closed.tick(0.06)
+check(closed.focused==2 and closed.spoon:status().lastResult.matched,
     'manual overview closes do not swallow a short switch')
 local openedDuringHold=fixture(0.18)
 openedDuringHold.input(1,48,{cmd=true}); openedDuringHold.input(2,48,{cmd=true}); openedDuringHold.tick(0.03)
@@ -644,13 +690,13 @@ openedDuringHold.present=true; openedDuringHold.tick(0.2)
 check(openedDuringHold.toggles==1 and not openedDuringHold.present, 'overview opened during hold is dismissed')
 local shortOpen=fixture(0.18); shortOpen.present=true
 shortOpen.input(1,48,{cmd=true}); shortOpen.input(3,55,{})
-check(shortOpen.toggles==1 and #shortOpen.posted==0, 'short switch dismisses an already open overview without native replay')
-local deferred=fixture(0.18); deferred.deferReplay=true
+check(shortOpen.toggles==1 and not shortOpen.opens, 'short switch dismisses an already open overview')
+local deferred=fixture(0.18); deferred.deferRelease=true
 deferred.input(1,48,{cmd=true}); deferred.input(3,55,{})
-local callback=deferred.spoon.replayTimer.callback
-check(#deferred.posted==0, 'replay checks run outside the event callback')
+local callback=deferred.spoon.releaseTimer.callback
+check(deferred.focused==1, 'short switch starts outside the event callback')
 deferred.spoon:stop(); callback()
-check(#deferred.posted==0, 'stop invalidates deferred replay')
+check(deferred.focused==1, 'stop invalidates deferred short switching')
 
 local empty=fixture(); empty.empty=true; empty.begin(); empty.tick(2); empty.tick(2.1)
 check(not empty.spoon:status().suspended and empty.spoon:status().lastResult.reason=='no-windows',

@@ -29,7 +29,7 @@ function Session:handle(kind, key, flags, repeated, now)
         self.cmd = flags.cmd == true -- Aggregate flag stays set while either Command is down.
         if self.mode ~= 'idle' and not self.cmd then
             self.released = true
-            if self.mode == 'pending' then self.mode = 'replay' end
+            if self.mode == 'pending' then self.mode = 'switching' end
         end
         return false
     end
@@ -42,7 +42,7 @@ function Session:handle(kind, key, flags, repeated, now)
         self.serial = self.serial + 1
         self.mode, self.started, self.cmd = self.delay == 0 and 'opening' or 'pending', now, true
         self.steps = flags.shift and -1 or 1
-        self.directions = { self.steps }
+        self.initialDirection = self.steps
         self.released = false
         self.tabDown, self.swallowed.tab = true, true
         return true
@@ -60,7 +60,6 @@ function Session:handle(kind, key, flags, repeated, now)
             if not repeated then
                 local direction = (key == 'grave' or flags.shift) and -1 or 1
                 self.steps = self.steps + direction
-                self.directions[#self.directions + 1] = direction
             end
             return true
         end

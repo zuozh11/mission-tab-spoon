@@ -1,5 +1,5 @@
 --- === MissionTab ===
---- Short Command-Tab switches applications; hold Command to navigate Mission Control.
+--- Short Command-Tab switches windows; hold Command to navigate Mission Control.
 local obj = { name = 'MissionTab', version = '0.2.35', author = 'zuozhi', license = 'MIT' }
 local directory = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
 local Session = dofile(directory .. 'session.lua')
@@ -35,16 +35,17 @@ end
 
 -- Resolve only the selected window's process. hs.window.get() and orderedWindows()
 -- enumerate every application through AX; one slow app can disable our event tap.
-local function windowForID(id)
+local function windowForID(id, pid, deadline)
     if not id then return nil end
-    local pid
-    for _, window in ipairs(hs.window.list()) do
-        if window.kCGWindowNumber == id then pid = window.kCGWindowOwnerPID; break end
+    if not pid then
+        for _, window in ipairs(hs.window.list()) do
+            if window.kCGWindowNumber == id then pid = window.kCGWindowOwnerPID; break end
+        end
     end
     if not pid then return nil end
     local root = hs.axuielement.applicationElementForPID(pid)
     if not root then return nil end
-    local deadline = now() + 0.2
+    deadline = deadline or now() + 0.2
     root:setTimeout(0.05)
     for _, element in ipairs(root:attributeValue('AXWindows') or {}) do
         if now() >= deadline then return nil end
@@ -52,6 +53,18 @@ local function windowForID(id)
         local window = element:asHSWindow()
         if window and window:id() == id then return window end
     end
+end
+
+local function recentWindowIDs(history, originalID, windows)
+    local recent, seen = {}, {}
+    local function append(id)
+        if id and id ~= originalID and not seen[id] then
+            recent[#recent + 1], seen[id] = id, true
+        end
+    end
+    for _, id in ipairs(history) do append(id) end
+    for _, window in ipairs(windows) do append(window.kCGWindowNumber) end
+    return recent
 end
 
 -- Stacking order can raise an application's other windows without focusing them.
@@ -272,8 +285,8 @@ end
 
 function obj:_finish(reason)
     self:_highlight()
-    if self.replayTimer then self.replayTimer:stop(); self.replayTimer = nil end
-    local resumeQueue = reason == 'committed' or reason == 'native-replay' or (reason == 'cancelled' and self.session.cancelledByUser)
+    if self.releaseTimer then self.releaseTimer:stop(); self.releaseTimer = nil end
+    local resumeQueue = reason == 'committed' or (reason == 'cancelled' and self.session.cancelledByUser)
     local run = self.run
     local overviewOpen = run and run.ownsMC and MC.snapshot().present
     if not overviewOpen then restorePointer(run) end
@@ -332,28 +345,61 @@ function obj:_hover(point, time)
     self.run.hoveredAt = time
 end
 
-function obj:_replay(remainingFlags)
-    -- Replay only when this gesture owns the controller, so it cannot overtake an exit.
-    remainingFlags = remainingFlags or hs.eventtap.checkKeyboardModifiers()
-    local releasedFlags = {}
-    for key, value in pairs(remainingFlags) do
-        if key ~= 'cmd' then releasedFlags[key] = value end
+function obj:_recordResult(target, actual, time)
+    self.lastResult = { target = target, actual = actual, matched = target == actual and target ~= nil,
+        elapsed = time - self.session.started }
+    if target and not self.lastResult.matched then
+        self.log.w('Focus differs from selected window: ' .. hs.inspect(self.lastResult))
     end
-    self.lastResult = nil
-    tagged(event.newKeyEvent('cmd', true)):post()
-    for _, direction in ipairs(self.session.directions) do
-        if direction < 0 then tagged(event.newKeyEvent('shift', true)):post() end
-        local mods = direction < 0 and { 'cmd', 'shift' } or { 'cmd' }
-        tagged(event.newKeyEvent(mods, 'tab', true)):post()
-        tagged(event.newKeyEvent(mods, 'tab', false)):post()
-        if direction < 0 then tagged(event.newKeyEvent('shift', false)):post() end
+end
+
+function obj:_switchWindow(time)
+    if not self.run then
+        local screen = hs.mouse.getCurrentScreen()
+        if not screen then self:_finish('pointer-screen-unavailable'); return end
+        local original = hs.window.focusedWindow()
+        local originalID = original and original:id()
+        local windows = hs.window.list()
+        local pids, ids = {}, {}
+        for _, window in ipairs(windows) do
+            if window.kCGWindowIsOnscreen and window.kCGWindowLayer == 0 then
+                local b = window.kCGWindowBounds
+                local display = b and hs.screen.find({ x = b.X, y = b.Y, w = b.Width, h = b.Height })
+                if display and display:id() == screen:id() then
+                    pids[window.kCGWindowNumber] = window.kCGWindowOwnerPID
+                end
+            end
+        end
+        for _, id in ipairs(recentWindowIDs(self.focusHistory, originalID, windows)) do
+            if pids[id] then ids[#ids + 1] = id end
+        end
+        if #ids == 0 then self:_finish('no-windows'); return end
+        local offset = self.session.steps - self.session.initialDirection
+        if offset ~= 0 and originalID and pids[originalID] then ids[#ids + 1] = originalID end
+
+        -- Bound AX lookup for the whole gesture when windows disappear or apps stop responding.
+        local deadline = now() + 0.2
+        while #ids > 0 and now() < deadline do
+            local index = (offset % #ids) + 1
+            local id = ids[index]
+            local window = windowForID(id, pids[id], deadline)
+            if window and window:isStandard() then
+                window:focus()
+                self.run = { switchTarget = id, focusDeadline = now() + 0.2 }
+                break
+            end
+            table.remove(ids, index)
+        end
+        if not self.run then self:_finish('target-unavailable'); return end
     end
-    tagged(event.newKeyEvent('cmd', false):setFlags(releasedFlags)):post()
-    -- A queued replay may run after the user has already started holding Command again.
-    if remainingFlags.cmd then
-        tagged(event.newKeyEvent('cmd', true):setFlags(remainingFlags)):post()
+
+    local focused = hs.window.focusedWindow()
+    local actual = focused and focused:id()
+    local target = self.run.switchTarget
+    if actual == target or time >= self.run.focusDeadline then
+        self:_recordResult(target, actual, time)
+        self:_finish('committed')
     end
-    self:_finish('native-replay')
 end
 
 function obj:_tick(snapshot)
@@ -367,25 +413,17 @@ function obj:_tick(snapshot)
             s.entryChecked = true
             if snapshot.present then s.mode = 'dismissing' end
         end
-        if s.mode == 'replay' then self:_replay(); return end
     end
     if s.mode == 'pending' then return end
+    if s.mode == 'switching' then self:_switchWindow(time); return end
     if not self.run then
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self:_finish('pointer-screen-unavailable'); return end
-        local recent, seen = {}, {}
-        local originalID = original and original:id()
-        local function append(id)
-            if id and id ~= originalID and not seen[id] then
-                recent[#recent + 1], seen[id] = id, true
-            end
-        end
-        for _, id in ipairs(self.focusHistory) do append(id) end
-        for _, window in ipairs(hs.window.list()) do append(window.kCGWindowNumber) end
+        local recent = recentWindowIDs(self.focusHistory, original and original:id(), hs.window.list())
         self.run = { original = original, recent = recent, serial = s.serial,
             screenID = screen:id(), screenFrame = screen:fullFrame(),
-            pointer = hs.mouse.absolutePosition(), stepOrigin = s.directions[1] }
+            pointer = hs.mouse.absolutePosition(), stepOrigin = s.initialDirection }
         self.lastResult = nil
     end
     local run = self.run
@@ -501,13 +539,7 @@ function obj:_tick(snapshot)
             if not run.cancelReason then run.pointerMoved = false end
             if not run.cancelReason then
                 local focused = hs.window.focusedWindow()
-                local actual = focused and focused:id()
-                self.lastResult = { target = run.target and run.target.id, actual = actual,
-                    matched = run.target and run.target.id ~= nil and run.target.id == actual,
-                    elapsed = time - s.started }
-                if self.lastResult.target and not self.lastResult.matched then
-                    self.log.w('Focus differs from selected window: ' .. hs.inspect(self.lastResult))
-                end
+                self:_recordResult(run.target and run.target.id, focused and focused:id(), time)
             end
             self:_finish(run.cancelReason or 'committed')
         elseif time - run.closing > self.closeTimeout then
@@ -589,7 +621,7 @@ function obj:_safeTick()
         self.suspended = 'Runtime error; inspect MissionTab log and call start()'
         -- Stop owning input immediately. Do not guess a click or toggle after an AX error.
         self.run = nil
-        if self.replayTimer then self.replayTimer:stop(); self.replayTimer = nil end
+        if self.releaseTimer then self.releaseTimer:stop(); self.releaseTimer = nil end
         for _, queued in ipairs(self.queuedSessions) do
             for key in pairs(queued.swallowed) do self.session.swallowed[key] = true end
         end
@@ -653,12 +685,11 @@ function obj:_event(e)
         end
         return consumed
     end
-    local previousKeyCount = #(self.session.directions or {})
+    local previousSteps = self.session.steps
     local previousSerial = self.session.serial
     local consumed = self.session:handle(inputKind, key, e:getFlags(),
         e:getProperty(properties.keyboardEventAutorepeat) == 1, now())
-    if self.run and self.run.mouseSelection
-        and #(self.session.directions or {}) ~= previousKeyCount then
+    if self.run and self.run.mouseSelection and self.session.steps ~= previousSteps then
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self.session.mode = 'cancelling'
         else
@@ -666,7 +697,7 @@ function obj:_event(e)
             run.screenID, run.screenFrame = screen:id(), screen:fullFrame()
             run.pointer = hs.mouse.absolutePosition()
             run.resumeSteps = self.session.steps
-            run.resumeDirection = self.session.directions[#self.session.directions]
+            run.resumeDirection = self.session.steps - previousSteps
             run.recent, run.userPointer, run.pointerMoved, run.lastPointer = nil, false, false, nil
             run.mouseSelection, run.index, run.target, run.previous = false, nil, nil, nil
             run.openedAt = now()
@@ -677,15 +708,15 @@ function obj:_event(e)
     if self.session.serial ~= previousSerial then
         self.lastResult = nil
     end
-    if self.session.mode == 'replay' and not self.replayTimer then
-        -- Verify the overview outside the input callback, without waiting for the 30 ms worker.
+    if self.session.mode == 'switching' and not self.run and not self.releaseTimer then
+        -- Start a released gesture outside the input callback, without waiting for the 30 ms worker.
         local timer
         timer = hs.timer.doAfter(0, function()
-            if self.replayTimer ~= timer then return end
-            self.replayTimer = nil
+            if self.releaseTimer ~= timer then return end
+            self.releaseTimer = nil
             self:_safeTick()
         end)
-        self.replayTimer = timer
+        self.releaseTimer = timer
     end
     if self.session.mode ~= 'idle' and not self.workTimer then
         local timer
@@ -751,7 +782,7 @@ function obj:stop()
     self.queuedSessions = {}
     self.restartAfterCleanup = false
     if self.tap then self.tap:stop(); self.tap = nil end
-    for _, key in ipairs({ 'health', 'workTimer', 'replayTimer', 'screenWatcher', 'sleepWatcher', 'applicationWatcher', 'focusObserver' }) do
+    for _, key in ipairs({ 'health', 'workTimer', 'releaseTimer', 'screenWatcher', 'sleepWatcher', 'applicationWatcher', 'focusObserver' }) do
         if self[key] then self[key]:stop(); self[key] = nil end
     end
     local run = self.run
