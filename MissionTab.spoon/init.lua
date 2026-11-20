@@ -353,12 +353,14 @@ function obj:_recordResult(target, actual, time)
     end
 end
 
-function obj:_switchWindow(time)
-    if not self.run then
+function obj:_switchWindow()
+    local confirming = self.run ~= nil
+    if not confirming then
         local screen = hs.mouse.getCurrentScreen()
         if not screen then self:_finish('pointer-screen-unavailable'); return end
         local original = hs.window.focusedWindow()
         local originalID = original and original:id()
+        local originalPID = original and original:pid()
         local windows = hs.window.list()
         local pids, ids = {}, {}
         for _, window in ipairs(windows) do
@@ -382,10 +384,14 @@ function obj:_switchWindow(time)
         while #ids > 0 and now() < deadline do
             local index = (offset % #ids) + 1
             local id = ids[index]
-            local window = windowForID(id, pids[id], deadline)
+            local pid = pids[id]
+            local window = windowForID(id, pid, deadline)
             if window and window:isStandard() then
                 window:focus()
-                self.run = { switchTarget = id, focusDeadline = now() + 0.2 }
+                local requestedAt = now()
+                self.run = { switchTarget = id, switchPID = pid, switchWindow = window,
+                    confirmAfter = originalPID ~= pid and requestedAt + 0.05 or requestedAt,
+                    focusDeadline = requestedAt + 0.2 }
                 break
             end
             table.remove(ids, index)
@@ -393,12 +399,19 @@ function obj:_switchWindow(time)
         if not self.run then self:_finish('target-unavailable'); return end
     end
 
+    local run = self.run
+    local time = now()
+    -- During app activation the target can briefly gain focus before the old key window returns.
+    if time < run.confirmAfter then return end
     local focused = hs.window.focusedWindow()
     local actual = focused and focused:id()
-    local target = self.run.switchTarget
-    if actual == target or time >= self.run.focusDeadline then
-        self:_recordResult(target, actual, time)
+    if actual == run.switchTarget or time >= run.focusDeadline then
+        self:_recordResult(run.switchTarget, actual, time)
         self:_finish('committed')
+    elseif confirming and run.switchWindow and focused and focused:pid() == run.switchPID then
+        -- App activation can restore its old key window. Retry once with the app already active.
+        run.switchWindow:focus()
+        run.switchWindow = nil
     end
 end
 
@@ -415,7 +428,7 @@ function obj:_tick(snapshot)
         end
     end
     if s.mode == 'pending' then return end
-    if s.mode == 'switching' then self:_switchWindow(time); return end
+    if s.mode == 'switching' then self:_switchWindow(); return end
     if not self.run then
         local original = hs.window.focusedWindow()
         local screen = hs.mouse.getCurrentScreen()

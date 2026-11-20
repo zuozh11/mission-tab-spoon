@@ -9,8 +9,13 @@ local function fixture(holdDelay)
         return { callback=callback, start=function(self) self.enabled=true; return self end,
             stop=function(self) self.enabled=false end, isEnabled=function(self) return self.enabled end }
     end
-    local function win(id) return {id=function() return id end,
-        focus=function() if f.deferFocus then f.pendingFocus=id else f.focused=id end end,
+    local function pidForID(id) return (id == 3 and f.frontPID) or id + 100 end
+    local function win(id) return {id=function() return id end, pid=function() return pidForID(id) end,
+        focus=function()
+            if f.deferFocus then f.pendingFocus=id
+            elseif f.activationFocus then f.focused, f.activationFocus=f.activationFocus, nil
+            else f.focused=id end
+        end,
         isStandard=function() return id~=f.nonstandard end,
         frame=function() return {x=id*100,y=0,w=50,h=50} end} end
     local function newEvent(kind, key, flags)
@@ -49,8 +54,7 @@ local function fixture(holdDelay)
                 f.windowLists=(f.windowLists or 0)+1
                 local windows={}
                 for id=1,3 do
-                    local pid=id==3 and f.frontPID or id+100
-                    windows[id]={kCGWindowNumber=id,kCGWindowOwnerPID=pid,kCGWindowLayer=0,
+                    windows[id]={kCGWindowNumber=id,kCGWindowOwnerPID=pidForID(id),kCGWindowLayer=0,
                         kCGWindowIsOnscreen=id~=f.invisible,
                         kCGWindowBounds={X=id==f.otherDisplay and 1200 or id*100,Y=0,Width=50,Height=50}}
                 end
@@ -58,7 +62,7 @@ local function fixture(holdDelay)
             end},
         application={applicationForPID=function(pid)
             return {bundleID=function() return "app." .. pid end}
-        end,frontmostApplication=function() return {pid=function() return f.frontPID or f.focused+100 end} end,
+        end,frontmostApplication=function() return {pid=function() return pidForID(f.focused) end} end,
             watcher={new=watcher,activated=1}},
         axuielement={observer={new=function()
             local observer=watcher(nil)
@@ -269,6 +273,7 @@ check(not quickSameApp.opens and quickSameApp.toggles==0 and quickSameApp.pointe
 for _, ineligible in ipairs({'invisible','otherDisplay','nonstandard'}) do
     local scoped=sameAppHistory(); scoped[ineligible]=3
     scoped.input(1,48,{cmd=true}); scoped.input(2,48,{cmd=true}); scoped.input(3,55,{})
+    scoped.tick(0.06)
     check(scoped.focused==2 and scoped.spoon:status().lastResult.matched,
         'short confirmation skips the most recent window when it is ' .. ineligible)
 end
@@ -391,7 +396,7 @@ check(temporaryOverlap.spoon.run.target.id==3 and temporaryOverlap.pointer.x==32
 local quick=fixture(0.18)
 quick.input(1,48,{cmd=true}); quick.input(2,48,{cmd=true}); quick.tick(0.08)
 quick.input(3,55,{})
-check(not quick.opens and quick.focused==2 and quick.spoon:status().lastResult.matched,
+check(not quick.opens and quick.focused==2,
     'short press focuses the window on release without a hold delay or overview')
 quick.input(1,48,{cmd=true}); quick.input(3,55,{})
 check(quick.input(2,48,{}), 'consecutive short gestures preserve ownership of a late Tab release')
@@ -401,13 +406,35 @@ check(async.spoon:status().state=='switching' and async.pendingFocus==2,
     'short press waits for an asynchronous focus change')
 async.input(1,48,{cmd=true}); async.input(2,48,{cmd=true}); async.input(3,55,{})
 async.focused=2; async.deferFocus=false; async.tick(0.03); async.tick(0.06)
+async.tick(0.09); async.tick(0.15)
 check(async.focused==1 and async.spoon:status().lastResult.matched and not async.opens,
     'queued short gesture starts after the actual focus changes')
+local activation=sameAppHistory()
+activation.focused=2
+activation.spoon.focusHistory={3,1}
+activation.activationFocus=1
+activation.input(1,48,{cmd=true}); activation.input(2,48,{cmd=true}); activation.input(3,55,{})
+check(activation.focused==1 and activation.spoon:status().state=='switching',
+    'activating another app can initially focus its previous window')
+activation.tick(0.03); activation.tick(0.06); activation.tick(0.09)
+check(activation.focused==3 and activation.spoon:status().lastResult
+    and activation.spoon:status().lastResult.matched and not activation.opens,
+    'one short press corrects focus when app activation chooses another window')
+local transient=sameAppHistory()
+transient.focused=2
+transient.spoon.focusHistory={3,1}
+transient.input(1,48,{cmd=true}); transient.input(2,48,{cmd=true}); transient.input(3,55,{})
+check(transient.focused==3 and transient.spoon:status().state=='switching',
+    'a momentary match during app activation does not finish the short press')
+transient.focused=1
+transient.tick(0.03); transient.tick(0.06); transient.tick(0.09)
+check(transient.focused==3 and transient.spoon:status().lastResult.matched,
+    'the same short press recovers when activation changes focus back')
 local mixed=fixture(0.18); mixed.begin(); mixed.input(3,55,{}); mixed.stuck=true; mixed.tick(0.21)
 mixed.input(1,48,{cmd=true}); mixed.input(2,48,{cmd=true}); mixed.input(3,55,{})
 mixed.input(1,48,{cmd=true}); mixed.input(2,48,{cmd=true})
 check(#mixed.spoon.queuedSessions==2 and mixed.opens==1, 'short gesture during exit waits its turn')
-mixed.present=false; mixed.stuck=false; mixed.tick(0.24); mixed.tick(0.27)
+mixed.present=false; mixed.stuck=false; mixed.tick(0.24); mixed.tick(0.27); mixed.tick(0.33)
 check(not mixed.present and mixed.opens==1 and mixed.focused==1 and mixed.spoon:status().lastResult.matched,
     'queued short gesture selects the previous window after the earlier confirmation')
 check(mixed.spoon.session.mode=='pending' and #mixed.spoon.queuedSessions==0,
